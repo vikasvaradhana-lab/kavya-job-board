@@ -396,10 +396,10 @@ body::before {
   <div class="loader-ring"></div>
   <div class="loader-text">Searching for new opportunities…</div>
   <div class="loader-steps">
-    <div class="loader-step" id="step1">Scanning Swedish university portals</div>
-    <div class="loader-step" id="step2">Checking industry job boards</div>
-    <div class="loader-step" id="step3">Matching to your profile</div>
-    <div class="loader-step" id="step4">Scoring & prioritising</div>
+    <div class="loader-step" id="step1">Scanning EURAXESS, Nature Careers & MSCA</div>
+    <div class="loader-step" id="step2">Checking university portals across Europe</div>
+    <div class="loader-step" id="step3">Matching to your profile & filtering</div>
+    <div class="loader-step" id="step4">Merging new jobs with your existing board</div>
   </div>
 </div>
 
@@ -519,13 +519,20 @@ body::before {
   </div>
 
   <div class="footer-note" id="footerNote">
-    <strong>📋 Tips:</strong> Use the status dropdown on each card to track your applications. Check "Hide Applied / Rejected / Closed" to keep your board clean. Click <strong>Refresh Jobs</strong> anytime to fetch the latest listings — Claude will search live job portals and update the board.<br><br>
-    <strong>🔗 Key portals:</strong>
-    <a href="https://uu.varbi.com" target="_blank">Uppsala University Jobs</a> ·
-    <a href="https://ki.se/en/vacancies" target="_blank">KI Vacancies</a> ·
-    <a href="https://academicpositions.com" target="_blank">Academic Positions</a> ·
-    <a href="https://www.scilifelab.se/careers/" target="_blank">SciLifeLab Careers</a> ·
-    <a href="https://careers.astrazeneca.com/location/sweden-jobs/7684/2661886/2" target="_blank">AstraZeneca Sweden</a>
+    <strong>📋 How it works:</strong> Use the status dropdown on each card to track your applications. Check "Hide Applied / Rejected / Closed" to keep your board clean. Click <strong>Refresh Board</strong> to fetch the latest live listings — <em>existing strong positions are always preserved</em>; only genuinely new jobs are added and only provably closed/expired ones are removed.<br><br>
+    <strong>🌍 Live sources searched:</strong>
+    EURAXESS · Nature Careers · MSCA · Academic Positions · Academic Transfer · FindAPhD ·
+    Uppsala University · Karolinska Institutet · Lund University · SciLifeLab · Stockholm University · Chalmers ·
+    University of Amsterdam · Leiden University · Utrecht University · Erasmus MC · Wageningen ·
+    University of Copenhagen · DTU · Novo Nordisk · Aarhus University ·
+    Max Planck · EMBL · VIB · ETH Zurich · KU Leuven · University of Basel · University of Luxembourg ·
+    AstraZeneca · Thermo Fisher · Roche · Novartis · Bayer<br><br>
+    <strong>🔗 Quick portals:</strong>
+    <a href="https://euraxess.ec.europa.eu/jobs/search" target="_blank">EURAXESS</a> ·
+    <a href="https://www.nature.com/naturecareers" target="_blank">Nature Careers</a> ·
+    <a href="https://academicpositions.com/jobs/position/phd/field/immunology" target="_blank">Academic Positions</a> ·
+    <a href="https://www.scilifelab.se/careers/" target="_blank">SciLifeLab</a> ·
+    <a href="https://vib.be/careers" target="_blank">VIB Careers</a>
   </div>
 </div>
 
@@ -534,10 +541,8 @@ body::before {
 // DATA STORE
 // ─────────────────────────────────────────────
 const STORAGE_KEY = 'kavya_job_statuses_v2';
-const UPDATE_KEY = 'kavya_last_update';
-
-// Clear any stale AI-fetched job cache so INITIAL_JOBS always loads
-try { localStorage.removeItem('kavya_jobs_v2'); } catch {}
+const UPDATE_KEY  = 'kavya_last_update';
+const JOBS_KEY    = 'kavya_jobs_v3'; // persists merged job board across sessions
 
 function loadStatuses() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
@@ -552,6 +557,17 @@ function saveLastUpdate() {
   const d = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   localStorage.setItem(UPDATE_KEY, d);
   return d;
+}
+function loadPersistedJobs() {
+  try {
+    const raw = localStorage.getItem(JOBS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+  } catch { return null; }
+}
+function savePersistedJobs(jobArr) {
+  try { localStorage.setItem(JOBS_KEY, JSON.stringify(jobArr)); } catch {}
 }
 
 // ─────────────────────────────────────────────
@@ -607,7 +623,8 @@ const INITIAL_JOBS = [
 // ─────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────
-let jobs = INITIAL_JOBS.slice(); // always start from full built-in list
+// On first load: prefer persisted merged board, fall back to INITIAL_JOBS
+let jobs = loadPersistedJobs() || INITIAL_JOBS.slice();
 let statuses = loadStatuses(); // { jobId: 'applied'|'rejected'|'closed'|'none' }
 let currentFilter = 'all';
 let currentCountry = 'sweden';
@@ -841,168 +858,193 @@ function openAllPortals() {
 }
 
 // ─────────────────────────────────────────────
-// FREE LOCAL REFRESH (no API)
+// LIVE API REFRESH — MERGE LOGIC
 // ─────────────────────────────────────────────
-// API Configuration - UPDATE THIS WITH YOUR API URL
-const API_URL = 'https://kavya-job-board.onrender.com'; // Replace with your deployed API URL
+const API_URL = 'https://kavya-job-board.onrender.com/api/jobs';
+
+// Derive a stable dedup key from a job object
+function jobKey(j) {
+  // Prefer explicit ID; otherwise derive from title + org (lowercase, trimmed)
+  if (j.id) return String(j.id).toLowerCase().trim();
+  const t = (j.title || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const o = (j.org || j.institution || j.company || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return `${o}||${t}`;
+}
+
+// Return true if a job should be removed from the board (clearly expired/closed)
+function isExpiredJob(j) {
+  const status = statuses[j.id];
+  if (status === 'closed') return true; // user marked closed
+
+  // Check deadline string for obvious past dates
+  const dl = (j.deadline || '').toLowerCase();
+  if (dl.includes('expired') || dl.includes('position filled') || dl.includes('closed')) return true;
+
+  // Parse deadline dates like "15 June 2026", "20 Jun 2026", "30 June 2026"
+  const dateMatch = dl.match(/(\d{1,2})\s+([a-z]+)\s+(\d{4})/);
+  if (dateMatch) {
+    const parsed = new Date(`${dateMatch[2]} ${dateMatch[1]}, ${dateMatch[3]}`);
+    if (!isNaN(parsed) && parsed < new Date()) return true;
+  }
+
+  return false;
+}
 
 function refreshJobs() {
-  const btn = document.getElementById('refreshBtn');
+  const btn     = document.getElementById('refreshBtn');
   const overlay = document.getElementById('loadingOverlay');
 
   btn.disabled = true;
   btn.classList.add('loading');
   overlay.classList.add('show');
 
-  const steps = ['step1','step2','step3','step4'];
+  const steps      = ['step1','step2','step3','step4'];
   const stepDelays = [400, 900, 1400, 1900];
-  steps.forEach((id, i) => {
-    setTimeout(() => document.getElementById(id).classList.add('done'), stepDelays[i]);
-  });
+  steps.forEach((id, i) => setTimeout(() => document.getElementById(id).classList.add('done'), stepDelays[i]));
 
-  // Fetch fresh jobs from API
+  const finishUI = () => {
+    const updated = saveLastUpdate();
+    document.getElementById('lastUpdated').textContent = updated;
+    renderAll();
+    steps.forEach(id => document.getElementById(id).classList.remove('done'));
+    overlay.classList.remove('show');
+    btn.disabled = false;
+    btn.classList.remove('loading');
+  };
+
+  const shuffle = arr => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+
+  const sortAndSave = () => {
+    // Remove only provably expired jobs (never delete just because they're "old")
+    jobs = jobs.filter(j => !isExpiredJob(j));
+
+    const high = shuffle(jobs.filter(j => j.tier === 'high'));
+    const med  = shuffle(jobs.filter(j => j.tier === 'medium'));
+    const str  = shuffle(jobs.filter(j => j.tier === 'stretch'));
+    jobs = [...high, ...med, ...str];
+
+    savePersistedJobs(jobs); // persist the merged board for next session
+  };
+
   setTimeout(() => {
-    fetchJobsFromAPI()
-      .then(apiJobs => {
-        if (apiJobs && apiJobs.length > 0) {
-          // Merge API jobs with initial jobs (API jobs first)
-          const apiIds = new Set(apiJobs.map(j => j.id));
-          const merged = [...apiJobs, ...INITIAL_JOBS.filter(j => !apiIds.has(j.id))];
-          jobs = merged;
-        } else {
-          // Fallback to INITIAL_JOBS if API fails
-          jobs = INITIAL_JOBS.slice();
+    fetch(API_URL)
+      .then(res => {
+        if (!res.ok) throw new Error('API returned ' + res.status);
+        return res.json();
+      })
+      .then(data => {
+        // Normalise response: accept { jobs: [...] } or bare array
+        const apiJobs = Array.isArray(data) ? data : (data.jobs || []);
+
+        if (apiJobs.length === 0) {
+          // API responded but returned nothing — keep everything as-is
+          sortAndSave();
+          finishUI();
+          showUpdatePopup(0, jobs.length, false, true);
+          return;
         }
 
-        // Shuffle within tiers
-        const shuffle = arr => {
-          const shuffled = [...arr];
-          for (let i = shuffled.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-          }
-          return shuffled;
-        };
+        // Build a dedup map of existing jobs
+        const existingKeys = new Map();
+        jobs.forEach(j => existingKeys.set(jobKey(j), j));
 
-        const high = shuffle(jobs.filter(j => j.tier === 'high'));
-        const med = shuffle(jobs.filter(j => j.tier === 'medium'));
-        const str = shuffle(jobs.filter(j => j.tier === 'stretch'));
-        jobs = [...high, ...med, ...str];
+        // Find truly new jobs (not already on the board)
+        const genuinelyNew = apiJobs.filter(j => !existingKeys.has(jobKey(j)));
 
-        const updated = saveLastUpdate();
-        document.getElementById('lastUpdated').textContent = updated;
-        renderAll();
-        steps.forEach(id => document.getElementById(id).classList.remove('done'));
-        overlay.classList.remove('show');
-        btn.disabled = false;
-        btn.classList.remove('loading');
+        // Merge: existing + new (new appended, no old jobs deleted)
+        jobs = [...jobs, ...genuinelyNew];
 
-        showUpdatePopup(apiJobs.length, jobs.length);
+        sortAndSave();
+        finishUI();
+        showUpdatePopup(genuinelyNew.length, jobs.length, false, false);
       })
       .catch(err => {
-        console.error('API fetch failed:', err);
-        // Fallback to shuffling existing jobs
-        jobs = INITIAL_JOBS.slice();
-        const shuffle = arr => arr.sort(() => Math.random() - 0.5);
-        const high = shuffle(jobs.filter(j => j.tier === 'high'));
-        const med = shuffle(jobs.filter(j => j.tier === 'medium'));
-        const str = shuffle(jobs.filter(j => j.tier === 'stretch'));
-        jobs = [...high, ...med, ...str];
-
-        const updated = saveLastUpdate();
-        document.getElementById('lastUpdated').textContent = updated;
-        renderAll();
-        steps.forEach(id => document.getElementById(id).classList.remove('done'));
-        overlay.classList.remove('show');
-        btn.disabled = false;
-        btn.classList.remove('loading');
-
-        showUpdatePopup(0, jobs.length, true);
+        console.error('API fetch failed — keeping existing board:', err);
+        // Network/API failure: keep existing board intact, never replace with INITIAL_JOBS
+        // Only seed INITIAL_JOBS if the board is completely empty (first-ever load + API fail)
+        if (jobs.length === 0) jobs = INITIAL_JOBS.slice();
+        sortAndSave();
+        finishUI();
+        showUpdatePopup(0, jobs.length, true, false);
       });
   }, 2400);
 }
 
-async function fetchJobsFromAPI() {
-  try {
-    const response = await fetch(API_URL + '/api/jobs', {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    if (!response.ok) throw new Error('API returned ' + response.status);
-
-    const data = await response.json();
-    return data.jobs || [];
-  } catch (e) {
-    console.warn('API unavailable:', e.message);
-    return [];
-  }
-}
-
-function showUpdatePopup(newCount, totalCount, offline = false) {
+function showUpdatePopup(newCount, totalCount, offline = false, emptyLive = false) {
   const existing = document.getElementById('newListingsModal');
   if (existing) existing.remove();
+
+  const borderColor = offline ? 'var(--gold)' : 'var(--accent)';
+  const btnColor    = offline ? 'var(--gold)' : 'var(--accent)';
 
   const modal = document.createElement('div');
   modal.id = 'newListingsModal';
   modal.style.cssText = `
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(8, 12, 16, 0.92); backdrop-filter: blur(8px);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 300;
+    background: rgba(8,12,16,0.92); backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center; z-index: 300;
   `;
 
   const content = document.createElement('div');
   content.style.cssText = `
-    background: var(--surface); border: 2px solid ${offline ? 'var(--gold)' : 'var(--accent)'};
+    background: var(--surface); border: 2px solid ${borderColor};
     border-radius: 16px; padding: 48px 40px; max-width: 480px; width: 90%;
     text-align: center; box-shadow: 0 24px 80px rgba(0,0,0,0.7);
   `;
 
-  const icon = document.createElement('div');
-  icon.textContent = offline ? '⚠️' : '🎯';
+  const icon  = document.createElement('div');
+  icon.textContent = offline ? '⚠️' : emptyLive ? '🔍' : newCount > 0 ? '🎯' : '✅';
   icon.style.cssText = 'font-size: 64px; margin-bottom: 20px;';
 
   const title = document.createElement('h2');
-  title.textContent = offline ? 'API Offline' : 'Board Updated!';
-  title.style.cssText = `
-    font-family: 'Playfair Display', serif; font-size: 28px;
-    color: var(--text); margin-bottom: 16px; font-weight: 700;
-  `;
+  title.textContent = offline ? 'API Offline' : emptyLive ? 'Board Checked' : 'Board Updated!';
+  title.style.cssText = `font-family:'Playfair Display',serif; font-size:28px; color:var(--text); margin-bottom:16px; font-weight:700;`;
 
   const stats = document.createElement('div');
   if (offline) {
     stats.innerHTML = `
-      <div style="font-size: 14px; color: var(--muted); margin-bottom: 24px;">
-        API is currently unreachable. Showing your curated positions instead.
+      <div style="font-size:14px;color:var(--muted);margin-bottom:24px;">
+        API is currently unreachable. Your full board of curated positions is preserved.
       </div>
-      <div style="font-size: 14px; color: var(--text); background: rgba(245,200,66,0.08); padding: 12px; border-radius: 8px;">
-        Total board: <strong style="color: var(--accent); font-size: 16px;">${totalCount}</strong> positions
-      </div>
-    `;
-  } else {
+      <div style="font-size:14px;color:var(--text);background:rgba(245,200,66,0.08);padding:12px;border-radius:8px;">
+        Board: <strong style="color:var(--gold);font-size:16px;">${totalCount}</strong> positions saved
+      </div>`;
+  } else if (emptyLive) {
     stats.innerHTML = `
-      <div style="font-size: 48px; font-weight: 700; color: var(--accent); margin: 20px 0;">
-        ${newCount}
+      <div style="font-size:16px;color:var(--muted);margin-bottom:24px;">
+        No new live jobs found today — all existing opportunities preserved.
       </div>
-      <div style="font-size: 16px; color: var(--muted); margin-bottom: 24px;">
-        ${newCount === 1 ? 'new quality match' : 'new quality matches'} found
-      </div>
-      <div style="font-size: 14px; color: var(--text); background: rgba(78,204,163,0.08); padding: 12px; border-radius: 8px;">
-        Total board: <strong style="color: var(--accent); font-size: 16px;">${totalCount}</strong> positions
-      </div>
-    `;
+      <div style="font-size:14px;color:var(--text);background:rgba(78,204,163,0.08);padding:12px;border-radius:8px;">
+        Board: <strong style="color:var(--accent);font-size:16px;">${totalCount}</strong> positions
+      </div>`;
+  } else {
+    const msg = newCount > 0
+      ? `${newCount} new LIVE ${newCount === 1 ? 'job' : 'jobs'} found`
+      : 'No new live jobs found today — all existing opportunities preserved';
+    stats.innerHTML = `
+      <div style="font-size:48px;font-weight:700;color:var(--accent);margin:20px 0;">${newCount}</div>
+      <div style="font-size:16px;color:var(--muted);margin-bottom:24px;">${msg}</div>
+      <div style="font-size:14px;color:var(--text);background:rgba(78,204,163,0.08);padding:12px;border-radius:8px;">
+        Live board: <strong style="color:var(--accent);font-size:16px;">${totalCount}</strong> total positions
+      </div>`;
   }
 
   const btn = document.createElement('button');
   btn.textContent = '✨ View board';
   btn.style.cssText = `
-    margin-top: 24px; padding: 12px 32px; border-radius: 8px; font-size: 14px;
-    font-weight: 600; cursor: pointer; border: none; background: ${offline ? 'var(--gold)' : 'var(--accent)'};
-    color: #080c10; font-family: 'Outfit', sans-serif; transition: opacity 0.2s;
+    margin-top:24px; padding:12px 32px; border-radius:8px; font-size:14px;
+    font-weight:600; cursor:pointer; border:none; background:${btnColor};
+    color:#080c10; font-family:'Outfit',sans-serif; transition:opacity 0.2s;
   `;
   btn.onmouseover = () => btn.style.opacity = '0.85';
-  btn.onmouseout = () => btn.style.opacity = '1';
+  btn.onmouseout  = () => btn.style.opacity = '1';
   btn.onclick = () => modal.remove();
 
   content.appendChild(icon);
@@ -1011,8 +1053,7 @@ function showUpdatePopup(newCount, totalCount, offline = false) {
   content.appendChild(btn);
   modal.appendChild(content);
   document.body.appendChild(modal);
-
-  setTimeout(() => { if (modal.parentNode) modal.remove(); }, 8000);
+  setTimeout(() => { if (modal.parentNode) modal.remove(); }, 9000);
 }
 
 // ─────────────────────────────────────────────
