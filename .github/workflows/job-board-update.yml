@@ -9,7 +9,7 @@ on:
 jobs:
   scrape-and-update:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -20,7 +20,9 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install axios cheerio
+        run: |
+          npm install axios cheerio playwright
+          npx playwright install --with-deps chromium
 
       - name: Run job scraper
         id: scraper
