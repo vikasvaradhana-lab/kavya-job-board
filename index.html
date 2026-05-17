@@ -399,7 +399,7 @@ body::before {
     <div class="loader-step" id="step1">Scanning EURAXESS, Nature Careers & MSCA</div>
     <div class="loader-step" id="step2">Checking university portals across Europe</div>
     <div class="loader-step" id="step3">Matching to your profile & filtering</div>
-    <div class="loader-step" id="step4">Merging new jobs with your existing board</div>
+    <div class="loader-step" id="step4">Loading latest jobs from the live API</div>
   </div>
 </div>
 
@@ -623,8 +623,7 @@ const INITIAL_JOBS = [
 // ─────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────
-// On first load: prefer persisted merged board, fall back to INITIAL_JOBS
-let jobs = loadPersistedJobs() || INITIAL_JOBS.slice();
+let jobs = [];
 let statuses = loadStatuses(); // { jobId: 'applied'|'rejected'|'closed'|'none' }
 let currentFilter = 'all';
 let currentCountry = 'sweden';
@@ -858,7 +857,7 @@ function openAllPortals() {
 }
 
 // ─────────────────────────────────────────────
-// LIVE API REFRESH — MERGE LOGIC
+// LIVE API REFRESH — API IS SOURCE OF TRUTH
 // ─────────────────────────────────────────────
 const API_URL = 'https://kavya-job-board.onrender.com/api/jobs';
 
@@ -930,7 +929,7 @@ function refreshJobs() {
     const str  = shuffle(jobs.filter(j => j.tier === 'stretch'));
     jobs = [...high, ...med, ...str];
 
-    savePersistedJobs(jobs); // persist the merged board for next session
+    savePersistedJobs(jobs);
   };
 
   setTimeout(() => {
@@ -943,34 +942,22 @@ function refreshJobs() {
         // Normalise response: accept { jobs: [...] } or bare array
         const apiJobs = Array.isArray(data) ? data : (data.jobs || []);
 
-        if (apiJobs.length === 0) {
-          // API responded but returned nothing — keep everything as-is
-          sortAndSave();
+        if (apiJobs.length > 0) {
+          jobs = apiJobs;
+          savePersistedJobs(jobs);
           finishUI();
-          showUpdatePopup(0, jobs.length, false, true);
+          showUpdatePopup(apiJobs.length, jobs.length, false, false);
           return;
         }
 
-        // Build a dedup map of existing jobs
-        const existingKeys = new Map();
-        jobs.forEach(j => existingKeys.set(jobKey(j), j));
-
-        // Find truly new jobs (not already on the board)
-        const genuinelyNew = apiJobs.filter(j => !existingKeys.has(jobKey(j)));
-
-        // Merge: existing + new (new appended, no old jobs deleted)
-        jobs = [...jobs, ...genuinelyNew];
-
-        sortAndSave();
+        jobs = [];
+        savePersistedJobs(jobs);
         finishUI();
-        showUpdatePopup(genuinelyNew.length, jobs.length, false, false);
+        showUpdatePopup(0, jobs.length, false, true);
       })
       .catch(err => {
-        console.error('API fetch failed — keeping existing board:', err);
-        // Network/API failure: keep existing board intact, never replace with INITIAL_JOBS
-        // Only seed INITIAL_JOBS if the board is completely empty (first-ever load + API fail)
-        if (jobs.length === 0) jobs = INITIAL_JOBS.slice();
-        sortAndSave();
+        console.error('API fetch failed — live board unavailable:', err);
+        jobs = [];
         finishUI();
         showUpdatePopup(0, jobs.length, true, false);
       });
@@ -1011,23 +998,23 @@ function showUpdatePopup(newCount, totalCount, offline = false, emptyLive = fals
   if (offline) {
     stats.innerHTML = `
       <div style="font-size:14px;color:var(--muted);margin-bottom:24px;">
-        API is currently unreachable. Your full board of curated positions is preserved.
+        API is currently unreachable. Live listings cannot be loaded right now.
       </div>
       <div style="font-size:14px;color:var(--text);background:rgba(245,200,66,0.08);padding:12px;border-radius:8px;">
-        Board: <strong style="color:var(--gold);font-size:16px;">${totalCount}</strong> positions saved
+        Board: <strong style="color:var(--gold);font-size:16px;">${totalCount}</strong> live positions loaded
       </div>`;
   } else if (emptyLive) {
     stats.innerHTML = `
       <div style="font-size:16px;color:var(--muted);margin-bottom:24px;">
-        No new live jobs found today — all existing opportunities preserved.
+        The live API returned no jobs.
       </div>
       <div style="font-size:14px;color:var(--text);background:rgba(78,204,163,0.08);padding:12px;border-radius:8px;">
         Board: <strong style="color:var(--accent);font-size:16px;">${totalCount}</strong> positions
       </div>`;
   } else {
     const msg = newCount > 0
-      ? `${newCount} new LIVE ${newCount === 1 ? 'job' : 'jobs'} found`
-      : 'No new live jobs found today — all existing opportunities preserved';
+      ? `${newCount} LIVE ${newCount === 1 ? 'job' : 'jobs'} loaded`
+      : 'No live jobs returned by the API';
     stats.innerHTML = `
       <div style="font-size:48px;font-weight:700;color:var(--accent);margin:20px 0;">${newCount}</div>
       <div style="font-size:16px;color:var(--muted);margin-bottom:24px;">${msg}</div>
@@ -1067,6 +1054,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('apiModal').addEventListener('click', e => {
     if (e.target === document.getElementById('apiModal')) closeModal();
   });
+  refreshJobs();
 });
 </script>
 </body>
