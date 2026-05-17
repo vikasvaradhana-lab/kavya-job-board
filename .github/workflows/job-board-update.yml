@@ -24,7 +24,7 @@ jobs:
 
       - name: Run job scraper
         id: scraper
-        run: node .github/workflows/scraper.js
+        run: node scraper.js
         env:
           API_URL: ${{ secrets.API_URL }}
           API_KEY: ${{ secrets.API_KEY }}
