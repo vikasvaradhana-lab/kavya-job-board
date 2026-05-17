@@ -13,6 +13,8 @@
 
 const axios  = require('axios');
 const cheerio = require('cheerio');
+const fs = require('fs');
+const path = require('path');
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 
@@ -22,11 +24,29 @@ const MIN_SCORE_THRESHOLD = 62; // below this → skip
 const TARGET_LIVE_JOBS    = 8;  // if we get at least this many live, skip fallback
 
 const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
-              + '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept-Language': 'en-GB,en;q=0.9',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+              + '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
+  'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+  'Referer': 'https://www.google.com/',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+  'Upgrade-Insecure-Requests': '1',
 };
+
+const JSON_HEADERS = {
+  ...HEADERS,
+  'Accept': 'application/json,text/plain,*/*',
+  'X-Requested-With': 'XMLHttpRequest',
+};
+
+const HISTORY_FILE = process.env.HISTORICAL_JOBS_PATH
+  || path.join(process.cwd(), '.scraper-history.json');
+
+const PLAYWRIGHT_TIMEOUT = Number(process.env.PLAYWRIGHT_TIMEOUT || 25000);
+let chromium = null;
+let playwrightChecked = false;
+let browserPromise = null;
 
 // ─── KAVYA'S PROFILE ─────────────────────────────────────────────────────────
 
@@ -218,19 +238,348 @@ function buildTags(title, org, country, location) {
   return tags.slice(0, 5);
 }
 
+function cleanText(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function absoluteUrl(link = '', base = '') {
+  if (!link) return base || '#';
+  try {
+    return new URL(link, base).toString();
+  } catch {
+    return link.startsWith('http') ? link : '#';
+  }
+}
+
+function hostReferer(url) {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}/`;
+  } catch {
+    return HEADERS.Referer;
+  }
+}
+
+function pushJob(jobs, raw, defaults = {}) {
+  const title = cleanText(raw.title);
+  if (!title || title.length < 6) return;
+  const baseUrl = defaults.baseUrl || raw.baseUrl || raw.url || '';
+  jobs.push({
+    title,
+    org: cleanText(raw.org || defaults.org || 'Unknown Organisation'),
+    country: raw.country || defaults.country || '',
+    location: cleanText(raw.location || defaults.location || ''),
+    description: cleanText(raw.description || defaults.description || ''),
+    type: raw.type || defaults.type,
+    deadline: raw.deadline || defaults.deadline,
+    deadlineWarn: raw.deadlineWarn || false,
+    url: absoluteUrl(raw.url || raw.link || '', baseUrl),
+  });
+}
+
+function parseJsonSafely(text) {
+  try {
+    return typeof text === 'string' ? JSON.parse(text) : text;
+  } catch {
+    return null;
+  }
+}
+
+function walkJson(value, visitor, seen = new Set()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return;
+  seen.add(value);
+  visitor(value);
+  if (Array.isArray(value)) {
+    value.forEach(item => walkJson(item, visitor, seen));
+  } else {
+    Object.values(value).forEach(item => walkJson(item, visitor, seen));
+  }
+}
+
+function firstDefined(obj, keys) {
+  for (const key of keys) {
+    if (obj && obj[key] !== undefined && obj[key] !== null && obj[key] !== '') return obj[key];
+  }
+  return '';
+}
+
+function jsonValue(value) {
+  if (Array.isArray(value)) return value.map(jsonValue).filter(Boolean).join(', ');
+  if (value && typeof value === 'object') {
+    return value.name || value.title || value.label || value.city || value.country || '';
+  }
+  return value || '';
+}
+
+function extractJobsFromJson(value, defaults = {}) {
+  const jobs = [];
+  walkJson(value, obj => {
+    const type = String(obj['@type'] || obj.type || obj.contentType || '').toLowerCase();
+    const title = firstDefined(obj, [
+      'title', 'jobTitle', 'name', 'externalTitle', 'postingTitle', 'displayTitle',
+      'positionTitle', 'requisitionTitle',
+    ]);
+    const href = firstDefined(obj, [
+      'url', 'jobUrl', 'externalUrl', 'canonicalPositionUrl', 'positionUrl',
+      'absolute_url', 'applyUrl',
+    ]);
+    const looksLikeJob = type.includes('jobposting')
+      || href && /job|career|vacanc|position|phd/i.test(String(href))
+      || /job|vacanc|position|phd|doctoral|scientist|research/i.test(String(title));
+    if (!title || !looksLikeJob) return;
+
+    const org = jsonValue(firstDefined(obj, [
+      'hiringOrganization', 'organization', 'employer', 'company', 'department',
+      'institution', 'organisationName',
+    ]));
+    const location = jsonValue(firstDefined(obj, [
+      'jobLocation', 'location', 'locations', 'city', 'workLocation',
+    ]));
+    const country = jsonValue(firstDefined(obj, ['country', 'countryCode']));
+    const description = jsonValue(firstDefined(obj, [
+      'description', 'summary', 'jobAbstract', 'teaser', 'shortDescription',
+    ]));
+    const deadline = jsonValue(firstDefined(obj, [
+      'validThrough', 'applicationDeadline', 'deadline', 'endDate',
+    ]));
+
+    pushJob(jobs, {
+      title: jsonValue(title),
+      org,
+      location,
+      country,
+      description,
+      url: jsonValue(href),
+      deadline: deadline ? `📅 ${deadline}` : undefined,
+      type: defaults.type,
+    }, defaults);
+  });
+  return deduplicateRawJobs(jobs);
+}
+
+function extractEmbeddedJobs(html, defaults = {}) {
+  const jobs = [];
+  const $ = cheerio.load(html);
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    const data = parseJsonSafely($(el).contents().text());
+    if (data) jobs.push(...extractJobsFromJson(data, defaults));
+  });
+
+  $('script').each((_, el) => {
+    const text = $(el).contents().text();
+    if (!text || !/(JobPosting|jobTitle|jobs|vacancies|positions)/i.test(text)) return;
+    const nextMatch = text.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+    const jsonText = nextMatch ? nextMatch[1] : null;
+    if (jsonText) {
+      const data = parseJsonSafely(jsonText);
+      if (data) jobs.push(...extractJobsFromJson(data, defaults));
+    }
+  });
+
+  const nextData = $('#__NEXT_DATA__').contents().text();
+  if (nextData) {
+    const data = parseJsonSafely(nextData);
+    if (data) jobs.push(...extractJobsFromJson(data, defaults));
+  }
+
+  return deduplicateRawJobs(jobs);
+}
+
+function parseHtmlCards(html, defaults, selectors) {
+  const jobs = [];
+  const $ = cheerio.load(html);
+  const cardSelector = selectors.card || 'article, li, .job, .vacancy, .position';
+  $(cardSelector).each((_, el) => {
+    const title = cleanText($(el).find(selectors.title || 'h1, h2, h3, a, [class*="title"]').first().text());
+    const link = $(el).find(selectors.link || 'a[href]').first().attr('href') || '';
+    const org = cleanText($(el).find(selectors.org || '[class*="employer"], [class*="company"], [class*="organisation"], [class*="organization"], [class*="institution"], [class*="university"]').first().text());
+    const location = cleanText($(el).find(selectors.location || '[class*="location"], [class*="country"], [class*="place"]').first().text());
+    const description = cleanText($(el).find(selectors.description || 'p, [class*="summary"], [class*="description"], [class*="teaser"]').first().text());
+    const deadline = cleanText($(el).find(selectors.deadline || '[class*="deadline"], time').first().text());
+    if (title && (link || /phd|doctoral|scientist|research|assistant|engineer/i.test(title))) {
+      pushJob(jobs, {
+        title, org, location, description, url: link,
+        deadline: deadline ? `📅 ${deadline}` : undefined,
+      }, defaults);
+    }
+  });
+  return deduplicateRawJobs(jobs);
+}
+
+function parseRssItems(xml, defaults = {}) {
+  const jobs = [];
+  const $ = cheerio.load(xml, { xmlMode: true });
+  $('item, entry').each((_, el) => {
+    pushJob(jobs, {
+      title: $(el).find('title').first().text(),
+      org: $(el).find('author name, author, source').first().text(),
+      description: $(el).find('description, summary, content').first().text(),
+      url: $(el).find('link').first().attr('href') || $(el).find('link').first().text() || $(el).find('guid').first().text(),
+      deadline: $(el).find('validThrough, deadline').first().text(),
+    }, defaults);
+  });
+  return jobs;
+}
+
+function deduplicateRawJobs(jobsArr) {
+  const seen = new Set();
+  return jobsArr.filter(j => {
+    const key = `${cleanText(j.title).toLowerCase()}||${cleanText(j.org).toLowerCase()}||${cleanText(j.url).toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // Safe fetch wrapper — never throws
 async function safeFetch(url, opts = {}) {
   try {
     const res = await axios.get(url, {
       timeout: opts.timeout || REQUEST_TIMEOUT,
-      headers: { ...HEADERS, ...(opts.headers || {}) },
+      headers: {
+        ...HEADERS,
+        Referer: opts.referer || hostReferer(url),
+        ...(opts.json ? JSON_HEADERS : {}),
+        ...(opts.headers || {}),
+      },
       maxRedirects: 5,
+      validateStatus: status => status >= 200 && status < 400,
     });
     return res.data;
   } catch (e) {
-    console.warn(`  ⚠ Fetch failed [${url.substring(0, 70)}]: ${e.message}`);
+    const status = e.response?.status ? `HTTP ${e.response.status}` : e.message;
+    console.warn(`  ⚠ Fetch failed [${url.substring(0, 95)}]: ${status}`);
     return null;
   }
+}
+
+async function safePost(url, body, opts = {}) {
+  try {
+    const res = await axios.post(url, body, {
+      timeout: opts.timeout || REQUEST_TIMEOUT,
+      headers: {
+        ...JSON_HEADERS,
+        Referer: opts.referer || hostReferer(url),
+        ...(opts.headers || {}),
+      },
+      maxRedirects: 5,
+      validateStatus: status => status >= 200 && status < 400,
+    });
+    return res.data;
+  } catch (e) {
+    const status = e.response?.status ? `HTTP ${e.response.status}` : e.message;
+    console.warn(`  ⚠ Post failed [${url.substring(0, 95)}]: ${status}`);
+    return null;
+  }
+}
+
+function getChromium() {
+  if (playwrightChecked) return chromium;
+  playwrightChecked = true;
+  try {
+    ({ chromium } = require('playwright'));
+  } catch (e) {
+    console.warn('  ⚠ Playwright not installed; protected sources will use axios-only fallback');
+    chromium = null;
+  }
+  return chromium;
+}
+
+async function getBrowser() {
+  const pwChromium = getChromium();
+  if (!pwChromium) return null;
+  if (!browserPromise) {
+    browserPromise = pwChromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+  }
+  try {
+    return await browserPromise;
+  } catch (e) {
+    browserPromise = null;
+    console.warn(`  ⚠ Playwright browser launch failed: ${e.message}`);
+    return null;
+  }
+}
+
+async function closeBrowser() {
+  if (!browserPromise) return;
+  try {
+    const browser = await browserPromise;
+    await browser.close();
+  } catch (e) {
+    console.warn(`  ⚠ Could not close Playwright browser: ${e.message}`);
+  } finally {
+    browserPromise = null;
+  }
+}
+
+async function renderPageHtml(url, opts = {}) {
+  let context;
+  try {
+    const browser = await getBrowser();
+    if (!browser) return null;
+    context = await browser.newContext({
+      userAgent: HEADERS['User-Agent'],
+      locale: 'en-GB',
+      viewport: { width: 1366, height: 900 },
+      extraHTTPHeaders: {
+        Accept: HEADERS.Accept,
+        'Accept-Language': HEADERS['Accept-Language'],
+        Referer: opts.referer || hostReferer(url),
+      },
+    });
+    const page = await context.newPage();
+    await page.route('**/*', route => {
+      const type = route.request().resourceType();
+      if (['image', 'media', 'font'].includes(type)) return route.abort();
+      return route.continue();
+    });
+    await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: opts.timeout || PLAYWRIGHT_TIMEOUT,
+      referer: opts.referer || hostReferer(url),
+    });
+    if (opts.waitForSelector) {
+      await page.waitForSelector(opts.waitForSelector, { timeout: opts.waitTimeout || 10000 }).catch(() => {});
+    }
+    await page.waitForLoadState('networkidle', { timeout: 6000 }).catch(() => {});
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+    await page.waitForTimeout(opts.settleMs || 1200);
+    return await page.content();
+  } catch (e) {
+    console.warn(`  ⚠ Playwright render failed [${url.substring(0, 95)}]: ${e.message}`);
+    return null;
+  } finally {
+    if (context) await context.close().catch(() => {});
+  }
+}
+
+async function parseProtectedPage(url, defaults, selectors, opts = {}) {
+  const jobs = [];
+  const html = await safeFetch(url, { referer: opts.referer });
+  if (html) {
+    jobs.push(...extractEmbeddedJobs(html, defaults));
+    jobs.push(...parseHtmlCards(html, defaults, selectors));
+  }
+
+  const minRenderedFallback = opts.minRenderedFallback ?? 2;
+  if (jobs.length >= minRenderedFallback) return jobs;
+
+  console.log(`  ↳ Rendering protected page with Playwright: ${url.substring(0, 80)}`);
+  const renderedHtml = await renderPageHtml(url, {
+    referer: opts.referer,
+    waitForSelector: opts.waitForSelector || selectors?.link || selectors?.card,
+  });
+  if (!renderedHtml) return jobs;
+
+  const renderedJobs = [
+    ...extractEmbeddedJobs(renderedHtml, defaults),
+    ...parseHtmlCards(renderedHtml, defaults, selectors),
+  ];
+  return deduplicateRawJobs([...jobs, ...renderedJobs]);
 }
 
 // ─── SOURCE SCRAPERS ─────────────────────────────────────────────────────────
@@ -253,7 +602,7 @@ async function scrapeEuraxess() {
     const url = `https://euraxess.ec.europa.eu/api/jobs/search?keywords=${q}&`
               + countries.map(c => `country=${c}`).join('&')
               + `&pageSize=${MAX_JOBS_PER_SOURCE}&format=json`;
-    const data = await safeFetch(url);
+    const data = await safeFetch(url, { json: true, referer: 'https://euraxess.ec.europa.eu/jobs/search' });
     if (!data || !data.jobs) continue;
 
     for (const j of data.jobs.slice(0, MAX_JOBS_PER_SOURCE)) {
@@ -270,62 +619,60 @@ async function scrapeEuraxess() {
     }
   }
 
-  // Also try the HTML search page as a backup
-  const htmlUrl = 'https://euraxess.ec.europa.eu/jobs/search?keywords=stem+cell+immunology&country=SE,NL,DK,DE,BE,CH,LU';
-  const html = await safeFetch(htmlUrl);
-  if (html) {
-    const $ = cheerio.load(html);
-    $('.job-result, .views-row, article.job').each((_, el) => {
-      const title = $(el).find('h3, .job-title, .views-field-title').first().text().trim();
-      const org   = $(el).find('.organisation-name, .field-name-field-job-organisation').first().text().trim();
-      const link  = $(el).find('a').first().attr('href') || '';
-      const desc  = $(el).find('.field-name-body, .job-description, p').first().text().trim();
-      if (title) jobs.push({ title, org: org || 'EURAXESS', country: 'se', description: desc, url: link.startsWith('http') ? link : `https://euraxess.ec.europa.eu${link}` });
-    });
+  // Also try the official HTML search surface. It is indexed server-side and
+  // usually survives API changes better than undocumented JSON routes.
+  for (const q of queries) {
+    const htmlUrl = `https://euraxess.ec.europa.eu/jobs/search?keywords=${q}`;
+    const html = await safeFetch(htmlUrl, { referer: 'https://euraxess.ec.europa.eu/jobs/search' });
+    if (!html) continue;
+    const defaults = { org: 'EURAXESS', country: 'sweden', baseUrl: htmlUrl };
+    jobs.push(...extractEmbeddedJobs(html, defaults));
+    jobs.push(...parseHtmlCards(html, defaults, {
+      card: '.job-result, .views-row, article.job, article, li',
+      link: 'a[href*="/jobs/"], a[href]',
+      org: '.organisation-name, .field-name-field-job-organisation, [class*="organisation"], [class*="organization"]',
+      location: '.country, .location, [class*="country"], [class*="location"]',
+      description: '.field-name-body, .job-description, p',
+    }));
   }
 
-  console.log(`  EURAXESS: ${jobs.length} raw candidates`);
-  return jobs;
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
+  console.log(`  EURAXESS: ${out.length} raw candidates`);
+  return out;
 }
 
 // ── 2. ACADEMIC POSITIONS ─────────────────────────────────────────────────────
 async function scrapeAcademicPositions() {
   const jobs = [];
-  const urls = [
-    'https://academicpositions.com/jobs/position/phd/field/immunology',
-    'https://academicpositions.com/jobs/position/phd/field/molecular-biology',
-    'https://academicpositions.com/jobs/position/phd/field/stem-cell-biology',
-    'https://academicpositions.com/jobs/position/research-assistant/country/sweden',
-    'https://academicpositions.com/jobs/position/research-assistant/country/netherlands',
-    'https://academicpositions.com/jobs/position/research-engineer/country/sweden',
+  const queries = [
+    'molecular biology',
+    'cell biology',
+    'stem cell',
+    'immunology',
+    'epigenetics',
+    'research assistant molecular biology',
   ];
+  const urls = queries.map(q => `https://academicpositions.com/find-jobs/?q=${encodeURIComponent(q)}`);
+  urls.push(
+    'https://academicpositions.com/find-jobs/phd',
+    'https://academicpositions.com/find-jobs/molecular-biology',
+    'https://academicpositions.com/find-jobs/cell-biology',
+    'https://academicpositions.com/find-jobs/biomedicine'
+  );
 
   for (const url of urls) {
-    const html = await safeFetch(url);
-    if (!html) continue;
-    const $ = cheerio.load(html);
-
-    $('article.job-list-item, .job-card, .job-listing, li.job').each((_, el) => {
-      const title = $(el).find('h2, h3, .job-title, [class*="title"]').first().text().trim();
-      const org   = $(el).find('.employer, .university, [class*="employer"], [class*="university"]').first().text().trim();
-      const link  = $(el).find('a[href*="/jobs/"]').first().attr('href') || $(el).find('a').first().attr('href') || '';
-      const desc  = $(el).find('p, .description, [class*="description"]').first().text().trim();
-      const loc   = $(el).find('.location, [class*="location"]').first().text().trim();
-      const dl    = $(el).find('.deadline, [class*="deadline"]').first().text().trim();
-      if (title && title.length > 5) {
-        jobs.push({
-          title, org,
-          country: resolveCountry(loc) || 'sweden',
-          location: loc,
-          description: desc,
-          url: link.startsWith('http') ? link : `https://academicpositions.com${link}`,
-          deadline: dl ? `📅 ${dl}` : '📅 Rolling',
-        });
-      }
-    });
+    const defaults = { baseUrl: url, org: 'Academic Positions', country: 'sweden' };
+    jobs.push(...await parseProtectedPage(url, defaults, {
+      card: 'article, [data-testid*="job"], [class*="JobCard"], [class*="job-card"], li[class*="job"]',
+      link: 'a[href*="/ad/"], a[href*="/jobs/"], a[href]',
+    }, {
+      referer: 'https://academicpositions.com/find-jobs/',
+      waitForSelector: 'a[href*="/ad/"], a[href*="/jobs/"], article, [class*="JobCard"]',
+    }));
   }
-  console.log(`  Academic Positions: ${jobs.length} raw candidates`);
-  return jobs;
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
+  console.log(`  Academic Positions: ${out.length} raw candidates`);
+  return out;
 }
 
 // ── 3. ACADEMIC TRANSFER ─────────────────────────────────────────────────────
@@ -367,82 +714,99 @@ async function scrapeAcademicTransfer() {
 // ── 4. NATURE CAREERS ────────────────────────────────────────────────────────
 async function scrapeNatureCareers() {
   const jobs = [];
-  const queries = ['stem-cell', 'immunology', 'epigenetics', 'molecular-biology', 'cell-biology'];
+  const queries = ['stem cell', 'immunology', 'epigenetics', 'molecular biology', 'cell biology'];
 
   for (const q of queries) {
-    const url = `https://www.nature.com/naturecareers/jobs?text=${q}&location=Europe&employment-type=PhD+studentship,Full-time`;
-    const html = await safeFetch(url);
-    if (!html) continue;
-    const $ = cheerio.load(html);
-
-    $('li[class*="ResultsList"], article[class*="job"], .job-result').each((_, el) => {
-      const title = $(el).find('h2, h3, a[class*="title"]').first().text().trim();
-      const org   = $(el).find('[class*="employer"], [class*="organisation"]').first().text().trim();
-      const link  = $(el).find('a').first().attr('href') || '';
-      const loc   = $(el).find('[class*="location"]').first().text().trim();
-      const desc  = $(el).find('p, [class*="description"]').first().text().trim();
-      if (title) {
-        jobs.push({
-          title, org: org || 'Nature Careers Listing',
-          country: resolveCountry(loc) || 'sweden',
-          location: loc,
-          description: desc,
-          url: link.startsWith('http') ? link : `https://www.nature.com${link}`,
-        });
-      }
+    const searchUrl = `https://www.nature.com/naturecareers/jobs/science-jobs/europe/?keywords=${encodeURIComponent(q)}`;
+    const rssUrl = `${searchUrl}&rss=1`;
+    const rss = await safeFetch(rssUrl, {
+      headers: { Accept: 'application/rss+xml,application/xml;q=0.9,*/*;q=0.7' },
+      referer: 'https://www.nature.com/naturecareers/jobs/',
     });
+    if (rss) jobs.push(...parseRssItems(rss, {
+      org: 'Nature Careers',
+      country: 'sweden',
+      baseUrl: searchUrl,
+    }));
+
+    const html = await safeFetch(searchUrl, { referer: 'https://www.nature.com/naturecareers/jobs/' });
+    const defaults = { baseUrl: searchUrl, org: 'Nature Careers', country: 'sweden' };
+    if (html) {
+      jobs.push(...extractEmbeddedJobs(html, defaults));
+      jobs.push(...parseHtmlCards(html, defaults, {
+        card: 'li[class*="ResultsList"], article[class*="job"], .job-result, .c-card, li',
+        link: 'a[href*="/naturecareers/job/"], a[href*="/jobs/"], a[href]',
+        org: '[class*="employer"], [class*="organisation"], [class*="organization"], [class*="recruiter"]',
+      }));
+    }
+    if (jobs.length < 3) jobs.push(...await parseProtectedPage(searchUrl, defaults, {
+      card: 'li[class*="ResultsList"], article[class*="job"], .job-result, .c-card, li',
+      link: 'a[href*="/naturecareers/job/"], a[href*="/jobs/"], a[href]',
+      org: '[class*="employer"], [class*="organisation"], [class*="organization"], [class*="recruiter"]',
+    }, {
+      referer: 'https://www.nature.com/naturecareers/jobs/',
+      waitForSelector: 'a[href*="/naturecareers/job/"], a[href*="/jobs/"], article, li',
+      minRenderedFallback: 1,
+    }));
   }
-  console.log(`  Nature Careers: ${jobs.length} raw candidates`);
-  return jobs;
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
+  console.log(`  Nature Careers: ${out.length} raw candidates`);
+  return out;
 }
 
 // ── 5. FINDAPHD ──────────────────────────────────────────────────────────────
 async function scrapeFindAPhD() {
   const jobs = [];
   const queries = [
-    'stem-cell',
+    'stem cell',
     'immunology',
     'epigenetics',
-    'molecular-biology',
-    'cell-culture',
-    'marie-curie',
+    'molecular biology',
+    'cell culture',
+    'marie curie',
   ];
-  const countryIds = '13,10,7,6,4,22,50'; // Sweden, Netherlands, Denmark, Germany, Belgium, Switzerland, Luxembourg
-
+  const urls = [];
   for (const q of queries) {
-    const url = `https://www.findaphd.com/phds/european-phds/?Keywords=${q}&CountryID=${countryIds}`;
-    const html = await safeFetch(url);
-    if (!html) continue;
-    const $ = cheerio.load(html);
-
-    $('.phd-result, .FindAPhD-CombinedOppRow, article.phd').each((_, el) => {
-      const title = $(el).find('h3 a, .title a, h2 a').first().text().trim();
-      const org   = $(el).find('.phd-dept, .department, .uni-name, .institution').first().text().trim();
-      const link  = $(el).find('h3 a, a[class*="phd"]').first().attr('href') || $(el).find('a').first().attr('href') || '';
-      const desc  = $(el).find('p.phd-summary, .description, p').first().text().trim();
-      const loc   = $(el).find('.country, .location').first().text().trim();
-      if (title) {
-        jobs.push({
-          title, org: org || 'European University',
-          country: resolveCountry(loc) || 'germany',
-          location: loc,
-          description: desc,
-          type: 'phd',
-          url: link.startsWith('http') ? link : `https://www.findaphd.com${link}`,
-        });
-      }
-    });
+    urls.push(`https://www.findaphd.com/phds/?Keywords=${encodeURIComponent(q)}`);
+    urls.push(`https://www.findaphd.com/phds/biological-sciences/?Keywords=${encodeURIComponent(q)}`);
   }
-  console.log(`  FindAPhD: ${jobs.length} raw candidates`);
-  return jobs;
+  urls.push(
+    'https://www.findaphd.com/phds/sweden/biological-sciences/',
+    'https://www.findaphd.com/phds/germany/biological-sciences/',
+    'https://www.findaphd.com/phds/netherlands/biological-sciences/'
+  );
+
+  for (const url of urls) {
+    const defaults = { baseUrl: url, org: 'European University', country: 'germany', type: 'phd' };
+    jobs.push(...await parseProtectedPage(url, defaults, {
+      card: '.phd-result, .FindAPhD-CombinedOppRow, article, div[class*="phd"], div[class*="result"]',
+      title: 'h3 a, h2 a, a[href*="/phds/project/"], a[href*="/phds/programme/"], .title a',
+      link: 'a[href*="/phds/project/"], a[href*="/phds/programme/"], h3 a, h2 a, a[href]',
+      org: '.phd-dept, .department, .uni-name, .institution, [class*="institution"], [class*="provider"]',
+      description: 'p.phd-summary, .description, p',
+    }, {
+      referer: 'https://www.findaphd.com/phds/',
+      waitForSelector: 'a[href*="/phds/project/"], a[href*="/phds/programme/"], .phd-result, article',
+    }));
+  }
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
+  console.log(`  FindAPhD: ${out.length} raw candidates`);
+  return out;
 }
 
 // ── 6. UNIVERSITY PORTALS — SWEDEN ───────────────────────────────────────────
 async function scrapeSwedishUniversities() {
   const jobs = [];
+  const jsPortalSelectors = {
+    card: 'article, .job-item, li[class*="job"], .varbi-position, .vacancy, li[class*="result"], [class*="position"]',
+    title: 'h2, h3, a, .title, [class*="title"]',
+    link: 'a[href]',
+    description: 'p, [class*="description"], [class*="summary"]',
+  };
 
   // Uppsala University — Varbi system
-  const uuHtml = await safeFetch('https://uu.varbi.com/en/what:job/list/?pageSize=30&searchQuery=stem+cell+immunology+molecular');
+  const uuUrl = 'https://uu.varbi.com/en/what:job/list/?pageSize=30&searchQuery=stem+cell+immunology+molecular';
+  const uuHtml = await safeFetch(uuUrl);
   if (uuHtml) {
     const $ = cheerio.load(uuHtml);
     $('article, .job-item, li[class*="job"], .varbi-position').each((_, el) => {
@@ -451,9 +815,11 @@ async function scrapeSwedishUniversities() {
       if (title) jobs.push({ title, org: 'Uppsala University', country: 'sweden', location: 'Uppsala', url: link.startsWith('http') ? link : `https://uu.varbi.com${link}` });
     });
   }
+  if (jobs.length < 2) jobs.push(...await parseProtectedPage(uuUrl, { org: 'Uppsala University', country: 'sweden', location: 'Uppsala', baseUrl: uuUrl }, jsPortalSelectors, { waitForSelector: 'a[href*="/what:job/"], article, li' }));
 
   // Karolinska Institutet — vacancies page
-  const kiHtml = await safeFetch('https://ki.se/en/vacancies?query=stem+cell+immunology+molecular+biology');
+  const kiUrl = 'https://ki.se/en/vacancies?query=stem+cell+immunology+molecular+biology';
+  const kiHtml = await safeFetch(kiUrl);
   if (kiHtml) {
     const $ = cheerio.load(kiHtml);
     $('article, .vacancy, .job, li[class*="result"]').each((_, el) => {
@@ -462,6 +828,7 @@ async function scrapeSwedishUniversities() {
       if (title) jobs.push({ title, org: 'Karolinska Institutet', country: 'sweden', location: 'Stockholm', url: link.startsWith('http') ? link : `https://ki.se${link}` });
     });
   }
+  if (jobs.length < 3) jobs.push(...await parseProtectedPage(kiUrl, { org: 'Karolinska Institutet', country: 'sweden', location: 'Stockholm', baseUrl: kiUrl }, jsPortalSelectors, { waitForSelector: 'article, a[href*="vacanc"], a[href*="job"]' }));
 
   // SciLifeLab — careers
   const sllHtml = await safeFetch('https://www.scilifelab.se/careers/');
@@ -475,7 +842,8 @@ async function scrapeSwedishUniversities() {
   }
 
   // Lund University — Varbi
-  const luHtml = await safeFetch('https://lu.varbi.com/en/what:job/list/?searchQuery=stem+cell+immunology+molecular');
+  const luUrl = 'https://lu.varbi.com/en/what:job/list/?searchQuery=stem+cell+immunology+molecular';
+  const luHtml = await safeFetch(luUrl);
   if (luHtml) {
     const $ = cheerio.load(luHtml);
     $('article, .job-item, .varbi-position').each((_, el) => {
@@ -484,9 +852,11 @@ async function scrapeSwedishUniversities() {
       if (title) jobs.push({ title, org: 'Lund University', country: 'sweden', location: 'Lund', url: link.startsWith('http') ? link : `https://lu.varbi.com${link}` });
     });
   }
+  if (jobs.length < 5) jobs.push(...await parseProtectedPage(luUrl, { org: 'Lund University', country: 'sweden', location: 'Lund', baseUrl: luUrl }, jsPortalSelectors, { waitForSelector: 'a[href*="/what:job/"], article, li' }));
 
   // Stockholm University — jobs
-  const suHtml = await safeFetch('https://www.su.se/english/about-the-university/work-at-su/available-jobs?query=molecular+immunology+cell+biology');
+  const suUrl = 'https://www.su.se/english/about-the-university/work-at-su/available-jobs?query=molecular+immunology+cell+biology';
+  const suHtml = await safeFetch(suUrl);
   if (suHtml) {
     const $ = cheerio.load(suHtml);
     $('article, .job, li[class*="result"]').each((_, el) => {
@@ -495,9 +865,11 @@ async function scrapeSwedishUniversities() {
       if (title) jobs.push({ title, org: 'Stockholm University', country: 'sweden', location: 'Stockholm', url: link.startsWith('http') ? link : `https://www.su.se${link}` });
     });
   }
+  if (jobs.length < 6) jobs.push(...await parseProtectedPage(suUrl, { org: 'Stockholm University', country: 'sweden', location: 'Stockholm', baseUrl: suUrl }, jsPortalSelectors, { waitForSelector: 'article, a[href*="job"], a[href*="vacanc"]' }));
 
   // Chalmers — jobs
-  const chalmersHtml = await safeFetch('https://www.chalmers.se/en/about-chalmers/working-at-chalmers/vacancies/?query=cell+biology+molecular');
+  const chalmersUrl = 'https://www.chalmers.se/en/about-chalmers/working-at-chalmers/vacancies/?query=cell+biology+molecular';
+  const chalmersHtml = await safeFetch(chalmersUrl);
   if (chalmersHtml) {
     const $ = cheerio.load(chalmersHtml);
     $('article, .vacancy, li[class*="job"]').each((_, el) => {
@@ -506,9 +878,11 @@ async function scrapeSwedishUniversities() {
       if (title) jobs.push({ title, org: 'Chalmers University', country: 'sweden', location: 'Gothenburg', url: link.startsWith('http') ? link : `https://www.chalmers.se${link}` });
     });
   }
+  if (jobs.length < 7) jobs.push(...await parseProtectedPage(chalmersUrl, { org: 'Chalmers University', country: 'sweden', location: 'Gothenburg', baseUrl: chalmersUrl }, jsPortalSelectors, { waitForSelector: 'article, a[href*="vacanc"], a[href*="job"]' }));
 
-  console.log(`  Swedish Universities: ${jobs.length} raw candidates`);
-  return jobs;
+  const out = deduplicateRawJobs(jobs);
+  console.log(`  Swedish Universities: ${out.length} raw candidates`);
+  return out;
 }
 
 // ── 7. UNIVERSITY PORTALS — NETHERLANDS ──────────────────────────────────────
@@ -525,19 +899,20 @@ async function scrapeDutchUniversities() {
   ];
 
   for (const src of sources) {
-    const html = await safeFetch(src.url);
-    if (!html) continue;
-    const $ = cheerio.load(html);
-    $('article, .vacancy, .job-item, li[class*="job"], li[class*="vacancy"], .result-item').each((_, el) => {
-      const title = $(el).find('h2, h3, a, .title, [class*="title"]').first().text().trim();
-      const link  = $(el).find('a').first().attr('href') || '';
-      if (title && title.length > 8) {
-        jobs.push({ title, org: src.name, country: src.country, location: src.location, url: link.startsWith('http') ? link : `${new URL(src.url).origin}${link}` });
-      }
+    const defaults = { org: src.name, country: src.country, location: src.location, baseUrl: src.url };
+    const pageJobs = await parseProtectedPage(src.url, defaults, {
+      card: 'article, .vacancy, .job-item, li[class*="job"], li[class*="vacancy"], .result-item, [class*="position"]',
+      title: 'h2, h3, a, .title, [class*="title"]',
+      link: 'a[href]',
+      description: 'p, [class*="summary"], [class*="description"]',
+    }, {
+      waitForSelector: 'article, a[href*="vacanc"], a[href*="job"], li',
     });
+    jobs.push(...pageJobs);
   }
-  console.log(`  Dutch Universities: ${jobs.length} raw candidates`);
-  return jobs;
+  const out = deduplicateRawJobs(jobs);
+  console.log(`  Dutch Universities: ${out.length} raw candidates`);
+  return out;
 }
 
 // ── 8. UNIVERSITY PORTALS — DENMARK ─────────────────────────────────────────
@@ -552,23 +927,95 @@ async function scrapeDanishInstitutions() {
   ];
 
   for (const src of sources) {
-    const html = await safeFetch(src.url);
-    if (!html) continue;
-    const $ = cheerio.load(html);
-    $('article, .vacancy, .job, li[class*="job"], .position-item, h2 a, h3 a').each((_, el) => {
-      const title = el.tagName === 'a'
-        ? $(el).text().trim()
-        : $(el).find('h2, h3, a, .title').first().text().trim();
-      const link = el.tagName === 'a'
-        ? $(el).attr('href') || ''
-        : $(el).find('a').first().attr('href') || '';
-      if (title && title.length > 8) {
-        jobs.push({ title, org: src.name, country: src.country, location: src.location, url: link.startsWith('http') ? link : `${new URL(src.url).origin}${link}` });
-      }
+    const defaults = { org: src.name, country: src.country, location: src.location, baseUrl: src.url };
+    const pageJobs = await parseProtectedPage(src.url, defaults, {
+      card: 'article, .vacancy, .job, li[class*="job"], .position-item, h2 a, h3 a, [class*="position"]',
+      title: 'h2, h3, a, .title, [class*="title"]',
+      link: 'a[href]',
+      description: 'p, [class*="summary"], [class*="description"]',
+    }, {
+      waitForSelector: 'article, a[href*="vacanc"], a[href*="job"], h2 a, h3 a, li',
     });
+    jobs.push(...pageJobs);
   }
-  console.log(`  Danish Institutions: ${jobs.length} raw candidates`);
-  return jobs;
+  const out = deduplicateRawJobs(jobs);
+  console.log(`  Danish Institutions: ${out.length} raw candidates`);
+  return out;
+}
+
+// ── 9. EMBL — Workday-backed official feed + public pages ────────────────────
+async function scrapeEMBL() {
+  const jobs = [];
+  const workdayUrl = 'https://embl.wd103.myworkdayjobs.com/wday/cxs/embl/EMBL/jobs';
+  const payload = {
+    appliedFacets: {},
+    limit: 50,
+    offset: 0,
+    searchText: '',
+  };
+  const data = await safePost(workdayUrl, payload, {
+    referer: 'https://embl.wd103.myworkdayjobs.com/EMBL',
+  });
+  if (data) {
+    const defaults = {
+      org: 'EMBL',
+      country: 'germany',
+      location: 'Heidelberg',
+      baseUrl: 'https://embl.wd103.myworkdayjobs.com/EMBL',
+    };
+    for (const j of data.jobPostings || data.jobs || []) {
+      const location = jsonValue(j.locationsText || j.location || j.locations) || defaults.location;
+      pushJob(jobs, {
+        title: j.title || j.externalPath || '',
+        org: 'EMBL',
+        location,
+        country: resolveCountry(location) || 'germany',
+        description: j.bulletFields?.join(' ') || j.summary || '',
+        url: j.externalPath || j.url,
+        deadline: j.postedOn ? `📅 ${j.postedOn}` : undefined,
+      }, defaults);
+    }
+    jobs.push(...extractJobsFromJson(data, defaults));
+  }
+
+  if (jobs.length < 2) {
+    const workdayPage = 'https://embl.wd103.myworkdayjobs.com/EMBL';
+    jobs.push(...await parseProtectedPage(workdayPage, {
+      org: 'EMBL',
+      country: 'germany',
+      location: 'Heidelberg',
+      baseUrl: workdayPage,
+    }, {
+      card: '[data-automation-id*="job"], li, article, div[class*="job"]',
+      title: '[data-automation-id="jobTitle"], h2, h3, a',
+      link: 'a[href*="/job/"], a[href]',
+      location: '[data-automation-id*="location"], [class*="location"]',
+    }, {
+      referer: 'https://www.embl.org/careers/',
+      waitForSelector: '[data-automation-id="jobTitle"], a[href*="/job/"], main',
+      minRenderedFallback: 1,
+    }));
+  }
+
+  const publicPages = [
+    'https://www.embl.org/careers/',
+    'https://www.embl.org/jobs/',
+    'https://www.embl.org/about/info/embl-international-phd-programme/application/',
+  ];
+  for (const url of publicPages) {
+    const defaults = { org: 'EMBL', country: 'germany', location: 'Heidelberg', baseUrl: url, type: url.includes('phd') ? 'phd' : undefined };
+    jobs.push(...await parseProtectedPage(url, defaults, {
+      card: 'article, .card, .vacancy, .job, li',
+      link: 'a[href*="wd103.myworkdayjobs.com"], a[href*="/jobs/position/"], a[href]',
+    }, {
+      referer: 'https://www.embl.org/careers/',
+      waitForSelector: 'a[href*="wd103.myworkdayjobs.com"], a[href*="/jobs/position/"], article, main',
+    }));
+  }
+
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 2);
+  console.log(`  EMBL: ${out.length} raw candidates`);
+  return out;
 }
 
 // ── 9. GERMANY / BELGIUM / SWITZERLAND / LUXEMBOURG ──────────────────────────
@@ -600,6 +1047,51 @@ async function scrapeRestOfEurope() {
   }
   console.log(`  Rest of Europe (DE/BE/CH/LU): ${jobs.length} raw candidates`);
   return jobs;
+}
+
+// ── 10. NOVO NORDISK — official search + indexed job ads ────────────────────
+async function scrapeNovoNordisk() {
+  const jobs = [];
+  const queries = [
+    'scientist immunology cell biology',
+    'molecular biology',
+    'cell culture',
+    'stem cell',
+    'phd',
+  ];
+  const searchUrls = queries.map(q =>
+    `https://www.novonordisk.com/careers/find-a-job.html?searchText=${encodeURIComponent(q)}&country=Denmark`
+  );
+  searchUrls.push(
+    'https://www.novonordisk.com/careers/find-a-job.html',
+    'https://www.novonordisk.com/careers/job-listings.html'
+  );
+
+  for (const url of searchUrls) {
+    const html = await safeFetch(url, { referer: 'https://www.novonordisk.com/careers/' });
+    if (!html) continue;
+    const defaults = { org: 'Novo Nordisk', country: 'denmark', location: 'Denmark', baseUrl: url };
+    jobs.push(...extractEmbeddedJobs(html, defaults));
+    jobs.push(...parseHtmlCards(html, defaults, {
+      card: 'article, li, .job-card, .result, [class*="job"]',
+      link: 'a[href*="/careers/find-a-job/job-ad."], a[href*="job-ad."], a[href]',
+      org: '[class*="company"], [class*="department"]',
+      location: '[class*="location"], [class*="country"], [class*="city"]',
+    }));
+  }
+
+  const indexedAds = [
+    'https://www.novonordisk.com/careers/find-a-job/job-ad.html',
+  ];
+  for (const url of indexedAds) {
+    const html = await safeFetch(url, { referer: 'https://www.novonordisk.com/careers/find-a-job.html' });
+    if (!html) continue;
+    jobs.push(...extractEmbeddedJobs(html, { org: 'Novo Nordisk', country: 'denmark', location: 'Denmark', baseUrl: url }));
+  }
+
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 2);
+  console.log(`  Novo Nordisk: ${out.length} raw candidates`);
+  return out;
 }
 
 // ── 10. INDUSTRY CAREERS PORTALS ─────────────────────────────────────────────
@@ -709,6 +1201,66 @@ const FALLBACK_JOBS = [
   { id:'fb-roche',        country:'switzerland', tier:'medium', type:'industry', org:'Roche Diagnostics',           score:75, title:'Bioprocess Specialist — Cell Culture Systems',       tags:['🏢 Industry','📍 Basel','MSc Level','⚠️ Fallback'],     why:'Cell culture optimisation, qPCR, GLP batch testing.',                                            deadline:'📅 Rolling',       deadlineWarn:false, url:'https://careers.roche.com',                                           source:'fallback' },
 ];
 
+function readHistoricalJobs() {
+  try {
+    if (!fs.existsSync(HISTORY_FILE)) return [];
+    const data = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+    const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    return jobs
+      .filter(j => j && j.title && j.org && j.url)
+      .slice(0, 60);
+  } catch (e) {
+    console.warn(`  ⚠ Could not read historical jobs cache: ${e.message}`);
+    return [];
+  }
+}
+
+function writeHistoricalJobs(liveJobs) {
+  if (!liveJobs.length) return;
+  try {
+    const existing = readHistoricalJobs();
+    const merged = deduplicateJobs([
+      ...liveJobs.map(j => ({ ...j, cachedAt: new Date().toISOString() })),
+      ...existing,
+    ])
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, 60);
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      jobs: merged,
+    }, null, 2));
+    console.log(`💾 Historical live cache updated: ${merged.length} jobs`);
+  } catch (e) {
+    console.warn(`  ⚠ Could not write historical jobs cache: ${e.message}`);
+  }
+}
+
+function historicalFallbackJobs(liveJobs = []) {
+  const liveFingerprints = new Set(liveJobs.map(j => fingerprint(j.title, j.org)));
+  return readHistoricalJobs()
+    .filter(j => !liveFingerprints.has(fingerprint(j.title, j.org)))
+    .map(j => ({
+      ...j,
+      id: `hist-${fingerprint(j.title, j.org).replace(/[^a-z0-9]/g, '-').substring(0, 48)}`,
+      source: 'fallback',
+      fetchedAt: new Date().toISOString(),
+      tags: [...(j.tags || []).filter(t => !String(t).includes('Fallback')), 'Recent live'],
+      why: `Preserved from a previous successful live scrape. ${j.why || ''}`.trim().substring(0, 180),
+      _fp: fingerprint(j.title, j.org),
+    }))
+    .slice(0, TARGET_LIVE_JOBS * 2);
+}
+
+function fallbackPool(liveJobs = []) {
+  const liveFingerprints = new Set(liveJobs.map(j => fingerprint(j.title, j.org)));
+  const historical = historicalFallbackJobs(liveJobs);
+  const historicalFingerprints = new Set(historical.map(j => fingerprint(j.title, j.org)));
+  const staticFallback = FALLBACK_JOBS
+    .filter(j => !liveFingerprints.has(fingerprint(j.title, j.org)))
+    .filter(j => !historicalFingerprints.has(fingerprint(j.title, j.org)));
+  return [...historical, ...staticFallback];
+}
+
 // ─── MAIN ORCHESTRATOR ───────────────────────────────────────────────────────
 
 async function scrapeAllSources() {
@@ -724,7 +1276,9 @@ async function scrapeAllSources() {
     swedishRaw,
     dutchRaw,
     danishRaw,
+    emblRaw,
     restEuropeRaw,
+    novoRaw,
     industryRaw,
   ] = await Promise.allSettled([
     scrapeEuraxess(),
@@ -735,7 +1289,9 @@ async function scrapeAllSources() {
     scrapeSwedishUniversities(),
     scrapeDutchUniversities(),
     scrapeDanishInstitutions(),
+    scrapeEMBL(),
     scrapeRestOfEurope(),
+    scrapeNovoNordisk(),
     scrapeIndustryCareers(),
   ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : []));
 
@@ -748,9 +1304,13 @@ async function scrapeAllSources() {
     ...swedishRaw,
     ...dutchRaw,
     ...danishRaw,
+    ...emblRaw,
     ...restEuropeRaw,
+    ...novoRaw,
     ...industryRaw,
   ];
+
+  await closeBrowser();
 
   console.log(`\n📊 Total raw candidates across all sources: ${allRaw.length}`);
 
@@ -773,6 +1333,7 @@ async function scrapeAllSources() {
 
   // Remove internal fingerprint field before posting
   deduped.forEach(j => delete j._fp);
+  writeHistoricalJobs(deduped);
 
   // If we found enough live jobs — return them, no fallback
   if (deduped.length >= TARGET_LIVE_JOBS) {
@@ -782,15 +1343,15 @@ async function scrapeAllSources() {
 
   // Partial live results — append only fallbacks that don't duplicate a live job
   if (deduped.length > 0) {
-    console.log(`⚠️  Only ${deduped.length} live jobs found — padding with non-duplicate fallbacks`);
-    const liveFingerprints = new Set(deduped.map(j => fingerprint(j.title, j.org)));
-    const padFallback = FALLBACK_JOBS.filter(j => !liveFingerprints.has(fingerprint(j.title, j.org)));
+    const padFallback = fallbackPool(deduped);
+    console.log(`⚠️  Only ${deduped.length} live jobs found — padding with ${padFallback.length} historical/static fallbacks`);
     return { jobs: [...deduped, ...padFallback], usedFallback: true };
   }
 
   // Zero live jobs — full fallback
-  console.log('❌ No live jobs found — using full fallback list');
-  return { jobs: FALLBACK_JOBS, usedFallback: true };
+  const intelligentFallback = fallbackPool([]);
+  console.log(`❌ No live jobs found — using ${intelligentFallback.length} historical/static fallback jobs`);
+  return { jobs: intelligentFallback, usedFallback: true };
 }
 
 // ─── POST TO API ─────────────────────────────────────────────────────────────
