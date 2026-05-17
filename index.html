@@ -871,22 +871,35 @@ function jobKey(j) {
   return `${o}||${t}`;
 }
 
-// Return true if a job should be removed from the board (clearly expired/closed)
+// Return true if a job should be ONLY removed if PROVABLY closed/expired
+// Default behavior: PRESERVE jobs (keep them visible until deadline proof exists)
 function isExpiredJob(j) {
+  // Only remove if user explicitly marked as closed
   const status = statuses[j.id];
-  if (status === 'closed') return true; // user marked closed
+  if (status === 'closed' || status === 'rejected') return true;
 
-  // Check deadline string for obvious past dates
+  // Only remove if deadline explicitly says position is filled/closed
   const dl = (j.deadline || '').toLowerCase();
-  if (dl.includes('expired') || dl.includes('position filled') || dl.includes('closed')) return true;
+  if (dl.includes('position filled') || dl.includes('closed') || dl.includes('no longer accepting')) return true;
 
-  // Parse deadline dates like "15 June 2026", "20 Jun 2026", "30 June 2026"
-  const dateMatch = dl.match(/(\d{1,2})\s+([a-z]+)\s+(\d{4})/);
+  // Only remove if we can PROVE the deadline has passed
+  // Parse deadline dates like "15 June 2026", "20 Jun 2026", etc.
+  const dateMatch = dl.match(/(\d{1,2})\s+([a-z]+)\s+(\d{4})/i);
   if (dateMatch) {
-    const parsed = new Date(`${dateMatch[2]} ${dateMatch[1]}, ${dateMatch[3]}`);
-    if (!isNaN(parsed) && parsed < new Date()) return true;
+    try {
+      const parsed = new Date(`${dateMatch[2]} ${dateMatch[1]}, ${dateMatch[3]}`);
+      if (!isNaN(parsed) && parsed < new Date()) {
+        // Only remove if deadline was more than 7 days ago (grace period for rolling apps)
+        const daysAgo = (new Date() - parsed) / (1000 * 60 * 60 * 24);
+        if (daysAgo > 7) return true;
+      }
+    } catch (e) {
+      // If parsing fails, do NOT remove — keep the job
+    }
   }
 
+  // CONSERVATIVE: If we can't prove it's closed, KEEP IT
+  // "Rolling", "Check portal", "Contact directly", etc. = KEEP
   return false;
 }
 
@@ -922,15 +935,24 @@ function refreshJobs() {
   };
 
   const sortAndSave = () => {
-    // Remove only provably expired jobs (never delete just because they're "old")
+    const beforeCleanup = jobs.length;
+    
+    // Remove ONLY provably expired jobs (not age-based, not time-based)
     jobs = jobs.filter(j => !isExpiredJob(j));
+    
+    const afterCleanup = jobs.length;
+    const removed = beforeCleanup - afterCleanup;
 
+    // Shuffle within tiers to avoid stale ordering
     const high = shuffle(jobs.filter(j => j.tier === 'high'));
     const med  = shuffle(jobs.filter(j => j.tier === 'medium'));
     const str  = shuffle(jobs.filter(j => j.tier === 'stretch'));
     jobs = [...high, ...med, ...str];
 
-    savePersistedJobs(jobs); // persist the merged board for next session
+    // Persist the merged, cleaned board for next session
+    savePersistedJobs(jobs);
+    
+    return { removed };
   };
 
   setTimeout(() => {
@@ -944,40 +966,39 @@ function refreshJobs() {
         const apiJobs = Array.isArray(data) ? data : (data.jobs || []);
 
         if (apiJobs.length === 0) {
-          // API responded but returned nothing — keep everything as-is
-          sortAndSave();
+          // API responded but returned nothing — keep board as-is, clean expired
+          const cleanup = sortAndSave();
           finishUI();
-          showUpdatePopup(0, jobs.length, false, true);
+          showUpdatePopup(0, jobs.length, false, true, cleanup.removed);
           return;
         }
 
-        // Build a dedup map of existing jobs
+        // Build a dedup map of existing jobs (prevent duplicates)
         const existingKeys = new Map();
         jobs.forEach(j => existingKeys.set(jobKey(j), j));
 
         // Find truly new jobs (not already on the board)
         const genuinelyNew = apiJobs.filter(j => !existingKeys.has(jobKey(j)));
 
-        // Merge: existing + new (new appended, no old jobs deleted)
+        // MERGE STRATEGY: existing jobs + new jobs (no aggressive deletion)
         jobs = [...jobs, ...genuinelyNew];
 
-        sortAndSave();
+        const cleanup = sortAndSave();
         finishUI();
-        showUpdatePopup(genuinelyNew.length, jobs.length, false, false);
+        showUpdatePopup(genuinelyNew.length, jobs.length, false, false, cleanup.removed);
       })
       .catch(err => {
         console.error('API fetch failed — keeping existing board:', err);
-        // Network/API failure: keep existing board intact, never replace with INITIAL_JOBS
-        // Only seed INITIAL_JOBS if the board is completely empty (first-ever load + API fail)
+        // Network/API failure: preserve board, only clean expired
         if (jobs.length === 0) jobs = INITIAL_JOBS.slice();
-        sortAndSave();
+        const cleanup = sortAndSave();
         finishUI();
-        showUpdatePopup(0, jobs.length, true, false);
+        showUpdatePopup(0, jobs.length, true, false, cleanup.removed);
       });
   }, 2400);
 }
 
-function showUpdatePopup(newCount, totalCount, offline = false, emptyLive = false) {
+function showUpdatePopup(newCount, totalCount, offline = false, emptyLive = false, removedCount = 0) {
   const existing = document.getElementById('newListingsModal');
   if (existing) existing.remove();
 
@@ -995,7 +1016,7 @@ function showUpdatePopup(newCount, totalCount, offline = false, emptyLive = fals
   const content = document.createElement('div');
   content.style.cssText = `
     background: var(--surface); border: 2px solid ${borderColor};
-    border-radius: 16px; padding: 48px 40px; max-width: 480px; width: 90%;
+    border-radius: 16px; padding: 48px 40px; max-width: 520px; width: 90%;
     text-align: center; box-shadow: 0 24px 80px rgba(0,0,0,0.7);
   `;
 
@@ -1011,29 +1032,39 @@ function showUpdatePopup(newCount, totalCount, offline = false, emptyLive = fals
   if (offline) {
     stats.innerHTML = `
       <div style="font-size:14px;color:var(--muted);margin-bottom:24px;">
-        API is currently unreachable. Your full board of curated positions is preserved.
+        API is offline. Your curated board is preserved — all jobs retained.
       </div>
-      <div style="font-size:14px;color:var(--text);background:rgba(245,200,66,0.08);padding:12px;border-radius:8px;">
-        Board: <strong style="color:var(--gold);font-size:16px;">${totalCount}</strong> positions saved
-      </div>`;
+      <div style="font-size:12px;color:var(--muted);background:rgba(245,200,66,0.08);padding:12px;border-radius:8px;margin-bottom:12px;">
+        ✓ ${totalCount} total positions saved in browser
+      </div>
+      ${removedCount > 0 ? `<div style="font-size:12px;color:var(--muted);margin-top:8px;">
+        • ${removedCount} expired job${removedCount===1?'':'s'} removed (deadline passed)
+      </div>` : ''}`;
   } else if (emptyLive) {
     stats.innerHTML = `
       <div style="font-size:16px;color:var(--muted);margin-bottom:24px;">
-        No new live jobs found today — all existing opportunities preserved.
+        No new positions found today. All existing opportunities preserved.
       </div>
-      <div style="font-size:14px;color:var(--text);background:rgba(78,204,163,0.08);padding:12px;border-radius:8px;">
-        Board: <strong style="color:var(--accent);font-size:16px;">${totalCount}</strong> positions
-      </div>`;
+      <div style="font-size:12px;color:var(--text);background:rgba(78,204,163,0.08);padding:12px;border-radius:8px;margin-bottom:12px;">
+        ✓ ${totalCount} strong positions active
+      </div>
+      ${removedCount > 0 ? `<div style="font-size:12px;color:var(--muted);margin-top:8px;">
+        • ${removedCount} expired job${removedCount===1?'':'s'} cleaned (deadline passed)
+      </div>` : ''}`;
   } else {
-    const msg = newCount > 0
-      ? `${newCount} new LIVE ${newCount === 1 ? 'job' : 'jobs'} found`
-      : 'No new live jobs found today — all existing opportunities preserved';
     stats.innerHTML = `
       <div style="font-size:48px;font-weight:700;color:var(--accent);margin:20px 0;">${newCount}</div>
-      <div style="font-size:16px;color:var(--muted);margin-bottom:24px;">${msg}</div>
-      <div style="font-size:14px;color:var(--text);background:rgba(78,204,163,0.08);padding:12px;border-radius:8px;">
-        Live board: <strong style="color:var(--accent);font-size:16px;">${totalCount}</strong> total positions
-      </div>`;
+      <div style="font-size:16px;color:var(--muted);margin-bottom:24px;">
+        new LIVE ${newCount === 1 ? 'job' : 'jobs'} found &amp; added
+      </div>
+      <div style="font-size:12px;color:var(--text);background:rgba(78,204,163,0.08);padding:12px;border-radius:8px;margin-bottom:12px;">
+        ✓ ${totalCount} total positions on board
+      </div>
+      ${removedCount > 0 ? `<div style="font-size:12px;color:var(--muted);margin-top:8px;">
+        • ${removedCount} expired job${removedCount===1?'':'s'} removed (deadline passed)
+      </div>` : `<div style="font-size:12px;color:var(--muted);margin-top:8px;">
+        • All previous strong jobs preserved (rolling/open deadlines)
+      </div>`}`;
   }
 
   const btn = document.createElement('button');

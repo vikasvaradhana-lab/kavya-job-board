@@ -57,25 +57,48 @@ app.get('/api/jobs', (req, res) => {
 });
 
 // POST /api/jobs - Update jobs (called by GitHub Actions scraper)
+// IMPORTANT: Merges new jobs with existing ones instead of overwriting
 app.post('/api/jobs', (req, res) => {
-  const { jobs, apiKey } = req.body;
+  const { jobs: incomingJobs, apiKey } = req.body;
 
   // Simple auth - use environment variable
   if (apiKey !== process.env.API_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  if (!Array.isArray(jobs)) {
+  if (!Array.isArray(incomingJobs)) {
     return res.status(400).json({ error: 'Invalid jobs array' });
   }
 
+  // Load EXISTING jobs from database
+  const existing = loadJobs();
+  const existingJobIds = new Set(existing.jobs.map(j => j.id));
+
+  // Find GENUINELY NEW jobs (not already on board)
+  const newJobs = incomingJobs.filter(j => !existingJobIds.has(j.id));
+
+  // MERGE STRATEGY: Keep existing jobs + add new ones (don't delete old jobs)
+  const merged = [...existing.jobs, ...newJobs];
+
+  // Save merged result
   const data = {
     lastUpdated: new Date().toISOString(),
-    jobs: jobs
+    jobs: merged,
+    stats: {
+      totalJobs: merged.length,
+      newJobsAdded: newJobs.length,
+      existingJobsPreserved: existing.jobs.length
+    }
   };
 
   saveJobs(data);
-  res.json({ success: true, count: jobs.length, lastUpdated: data.lastUpdated });
+  res.json({ 
+    success: true, 
+    totalCount: merged.length,
+    newAdded: newJobs.length,
+    preserved: existing.jobs.length,
+    lastUpdated: data.lastUpdated 
+  });
 });
 
 // GET /api/health - Health check
