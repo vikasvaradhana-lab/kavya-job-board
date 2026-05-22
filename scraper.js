@@ -19,9 +19,9 @@ const path = require('path');
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 
 const REQUEST_TIMEOUT = 12000; // ms per fetch
-const MAX_JOBS_PER_SOURCE = 20;
-const MIN_SCORE_THRESHOLD = 62; // below this → skip
-const TARGET_LIVE_JOBS    = 8;  // if we get at least this many live, skip fallback
+const MAX_JOBS_PER_SOURCE = 25;
+const MIN_SCORE_THRESHOLD = 48; // below this → skip (lowered to allow more genuine matches through)
+const TARGET_LIVE_JOBS    = 15; // if we get at least this many live, skip fallback
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -63,65 +63,109 @@ const STRONG_KEYWORDS = [
   { kw: 'immunofluorescence',     w: 14 },
   { kw: 'microbiology',           w: 13 },
   { kw: 'cell culture',           w: 13 },
+  { kw: 'mammalian cell',         w: 13 },
+  { kw: 'cell biology',           w: 11 },
+  { kw: 'molecular biology',      w: 12 },
   { kw: 'qpcr',                   w: 13 },
   { kw: 'rt-qpcr',                w: 14 },
-  { kw: 'molecular biology',      w: 12 },
+  { kw: 'pcr',                    w:  8 },
+  { kw: 'flow cytometry',         w: 12 },
+  { kw: 'elisa',                  w: 10 },
+  { kw: 'western blot',           w:  9 },
+  { kw: 'confocal',               w: 10 },
+  { kw: 'fluorescence microscopy',w: 11 },
   { kw: 'neurodegener',           w: 12 },
   { kw: 'neurodegeneration',      w: 14 },
+  { kw: 'neuroscience',           w: 10 },
   { kw: 'organoid',               w: 14 },
   { kw: 'regenerative medicine',  w: 15 },
   { kw: 'caco-2',                 w: 14 },
   { kw: 'sh-sy5y',                w: 16 },
   { kw: 'glp',                    w: 10 },
   { kw: 'qa/qc',                  w: 10 },
+  { kw: 'quality control',        w:  8 },
   { kw: 'atmp',                   w: 12 },
   { kw: 'cell therapy',           w: 14 },
   { kw: 'epigenomics',            w: 15 },
-  // Role types
+  { kw: 'chromatin',              w: 12 },
+  { kw: 'histone',                w: 11 },
+  { kw: 'gene expression',        w:  9 },
+  { kw: 'rna',                    w:  7 },
+  { kw: 'mrna',                   w:  8 },
+  { kw: 'crispr',                 w: 11 },
+  { kw: 'transfection',           w: 10 },
+  { kw: 'lentiviral',             w: 10 },
+  { kw: 'in vitro',               w:  8 },
+  { kw: 'toxicology',             w: 10 },
+  { kw: 'neurotoxicology',        w: 14 },
+  { kw: 'endocrine disrupt',      w: 12 },
+  { kw: 'barrier function',       w: 11 },
+  { kw: 'mucosal immunity',       w: 12 },
+  // Role types that match Kavya's level
   { kw: 'marie curie',            w: 20 },
   { kw: 'msca',                   w: 18 },
   { kw: 'fully funded',           w: 15 },
   { kw: 'research assistant',     w: 10 },
   { kw: 'research engineer',      w: 10 },
+  { kw: 'research technician',    w: 10 },
+  { kw: 'lab technician',         w:  9 },
+  { kw: 'laboratory technician',  w:  9 },
   { kw: 'associate scientist',    w: 10 },
+  { kw: 'junior scientist',       w: 11 },
   { kw: 'phd student',            w: 14 },
   { kw: 'doctoral',               w: 12 },
+  { kw: 'phd position',           w: 14 },
+  { kw: 'phd candidate',          w: 13 },
+  { kw: 'early career',           w:  9 },
+  { kw: 'graduate',               w:  7 },
+  { kw: 'msc',                    w:  7 },
+  { kw: 'masters',                w:  6 },
 ];
 
 // Hard exclusions — if present, score → -1 (drop job entirely)
+// NOTE: Keep this list tight — over-exclusion was causing 274→1 collapse
 const HARD_EXCLUDE = [
-  'bioinformatics only',
   'software engineer',
   'software developer',
-  'data scientist',
+  'devops engineer',
+  'it engineer',
   'nursing',
-  'nurse ',
-  'postdoctoral',
-  'postdoc ',
-  'post-doc',
+  'nurse practitioner',
+  'postdoctoral fellow',
+  'postdoc fellow',
+  'post-doctoral fellow',
   'full professor',
   'associate professor',
   'assistant professor',
-  'business development',
+  'business development manager',
   'sales representative',
   'account manager',
-  'pure chemistry',
-  'inorganic chemistry',
-  'veterinary',
+  'account executive',
+  'pure inorganic chemistry',
+  'veterinary surgeon',
   'animal husbandry only',
+  'hr manager',
+  'finance manager',
 ];
 
 // Soft exclusions — reduce score but don't drop
+// Penalties are intentionally moderate so borderline jobs land as "stretch" not dropped
 const SOFT_EXCLUDE = [
-  { kw: 'senior scientist',   penalty: 12 },
-  { kw: 'director',           penalty: 15 },
-  { kw: 'manager',            penalty: 15 },
-  { kw: 'head of',            penalty: 18 },
-  { kw: 'team lead',          penalty: 12 },
-  { kw: 'bioinformatics',     penalty: 8  },
-  { kw: 'machine learning',   penalty: 6  },
-  { kw: 'deep learning',      penalty: 6  },
-  { kw: 'animal model only',  penalty: 10 },
+  { kw: 'senior scientist',      penalty: 10 },
+  { kw: 'principal scientist',   penalty: 14 },
+  { kw: 'director',              penalty: 14 },
+  { kw: 'manager',               penalty: 12 },
+  { kw: 'head of',               penalty: 15 },
+  { kw: 'team lead',             penalty: 10 },
+  { kw: 'bioinformatics only',   penalty: 16 },
+  { kw: 'bioinformatics',        penalty:  5 }, // soft — might still be relevant lab job
+  { kw: 'machine learning only', penalty: 14 },
+  { kw: 'machine learning',      penalty:  4 },
+  { kw: 'deep learning',         penalty:  4 },
+  { kw: 'animal model only',     penalty: 10 },
+  { kw: 'data scientist',        penalty: 10 },
+  { kw: 'postdoctoral',          penalty: 16 }, // soft so postdoc-adjacent roles survive
+  { kw: 'postdoc',               penalty: 14 },
 ];
 
 // Country → dashboard key
@@ -145,22 +189,35 @@ function resolveCountry(raw = '') {
 function scoreJob(title = '', description = '') {
   const text = (title + ' ' + description).toLowerCase();
 
-  // Hard exclusion check
+  // Hard exclusion check (tight list — only truly irrelevant roles)
   for (const excl of HARD_EXCLUDE) {
     if (text.includes(excl)) return -1;
   }
 
-  let score = 42; // base
+  let score = 36; // base — life sciences context assumed from source
+
+  // Life sciences context bonuses (source-level signals)
+  if (/life science|biolog|biomed|biochem|biotech|pharmaceutical|health|medical|research|laborator/i.test(text)) {
+    score += 6;
+  }
 
   // PhD / role boosts applied first
-  if (text.includes('phd') || text.includes('doctoral')) score += 12;
+  if (text.includes('phd') || text.includes('doctoral')) score += 14;
   if (text.includes('fully funded') || text.includes('marie curie') || text.includes('msca')) score += 18;
-  if (/research\s+(assistant|engineer|scientist|associate)/i.test(text)) score += 8;
+  if (/research\s+(assistant|engineer|scientist|associate|technician)/i.test(text)) score += 10;
+  if (/lab(oratory)?\s+(technician|assistant|manager)/i.test(text)) score += 8;
+  if (/junior\s+(scientist|researcher|associate)/i.test(text)) score += 9;
+  if (/early.career|graduate.programme|trainee|internship/i.test(text)) score += 6;
 
   // Strong keyword matches
   for (const { kw, w } of STRONG_KEYWORDS) {
     if (text.includes(kw)) score += w;
   }
+
+  // Multi-keyword bonus: if ≥3 strong keywords match, extra relevance bonus
+  const matchCount = STRONG_KEYWORDS.filter(({ kw }) => text.includes(kw)).length;
+  if (matchCount >= 3) score += 8;
+  if (matchCount >= 5) score += 6;
 
   // Soft exclusion penalties
   for (const { kw, penalty } of SOFT_EXCLUDE) {
@@ -171,7 +228,7 @@ function scoreJob(title = '', description = '') {
 }
 
 function tierFromScore(score) {
-  return score >= 80 ? 'high' : score >= 65 ? 'medium' : 'stretch';
+  return score >= 76 ? 'high' : score >= 58 ? 'medium' : 'stretch';
 }
 
 function typeFromText(text) {
@@ -213,6 +270,7 @@ function buildJob(raw, source) {
     url: raw.url || '#',
     source: 'live',
     fetchedAt: new Date().toISOString(),
+    dateFound: new Date().toISOString(), // ISO timestamp of when this job was first discovered
     _fp: fingerprint(raw.title, raw.org),
   };
 }
@@ -651,26 +709,44 @@ async function scrapeAcademicPositions() {
     'immunology',
     'epigenetics',
     'research assistant molecular biology',
+    'neuroscience',
+    'regenerative medicine',
+    'cell culture',
+    'research engineer biology',
+    'lab technician biology',
   ];
   const urls = queries.map(q => `https://academicpositions.com/find-jobs/?q=${encodeURIComponent(q)}`);
   urls.push(
     'https://academicpositions.com/find-jobs/phd',
     'https://academicpositions.com/find-jobs/molecular-biology',
     'https://academicpositions.com/find-jobs/cell-biology',
-    'https://academicpositions.com/find-jobs/biomedicine'
+    'https://academicpositions.com/find-jobs/biomedicine',
+    'https://academicpositions.com/find-jobs/immunology',
+    'https://academicpositions.com/find-jobs/neuroscience',
+    // Country-specific PhD listings
+    'https://academicpositions.com/jobs/position/phd/country/sweden',
+    'https://academicpositions.com/jobs/position/phd/country/germany',
+    'https://academicpositions.com/jobs/position/phd/country/netherlands',
+    'https://academicpositions.com/jobs/position/phd/country/denmark',
+    'https://academicpositions.com/jobs/position/phd/country/belgium',
+    'https://academicpositions.com/jobs/position/phd/country/switzerland',
   );
 
   for (const url of urls) {
     const defaults = { baseUrl: url, org: 'Academic Positions', country: 'sweden' };
     jobs.push(...await parseProtectedPage(url, defaults, {
-      card: 'article, [data-testid*="job"], [class*="JobCard"], [class*="job-card"], li[class*="job"]',
+      card: 'article, [data-testid*="job"], [class*="JobCard"], [class*="job-card"], li[class*="job"], [class*="position-card"]',
       link: 'a[href*="/ad/"], a[href*="/jobs/"], a[href]',
+      title: 'h2, h3, [class*="title"], a',
+      org: '[class*="employer"], [class*="university"], [class*="institution"]',
+      location: '[class*="location"], [class*="country"]',
+      description: 'p, [class*="description"], [class*="summary"]',
     }, {
       referer: 'https://academicpositions.com/find-jobs/',
       waitForSelector: 'a[href*="/ad/"], a[href*="/jobs/"], article, [class*="JobCard"]',
     }));
   }
-  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 4);
   console.log(`  Academic Positions: ${out.length} raw candidates`);
   return out;
 }
@@ -714,10 +790,15 @@ async function scrapeAcademicTransfer() {
 // ── 4. NATURE CAREERS ────────────────────────────────────────────────────────
 async function scrapeNatureCareers() {
   const jobs = [];
-  const queries = ['stem cell', 'immunology', 'epigenetics', 'molecular biology', 'cell biology'];
+  const queries = [
+    'stem cell', 'immunology', 'epigenetics', 'molecular biology', 'cell biology',
+    'regenerative medicine', 'neuroscience', 'cell culture', 'phd student biology',
+  ];
 
   for (const q of queries) {
+    // Europe-scoped search
     const searchUrl = `https://www.nature.com/naturecareers/jobs/science-jobs/europe/?keywords=${encodeURIComponent(q)}`;
+    // RSS feed first (most reliable)
     const rssUrl = `${searchUrl}&rss=1`;
     const rss = await safeFetch(rssUrl, {
       headers: { Accept: 'application/rss+xml,application/xml;q=0.9,*/*;q=0.7' },
@@ -734,11 +815,15 @@ async function scrapeNatureCareers() {
     if (html) {
       jobs.push(...extractEmbeddedJobs(html, defaults));
       jobs.push(...parseHtmlCards(html, defaults, {
-        card: 'li[class*="ResultsList"], article[class*="job"], .job-result, .c-card, li',
+        card: 'li[class*="ResultsList"], article[class*="job"], .job-result, .c-card, li, [data-test*="job"]',
         link: 'a[href*="/naturecareers/job/"], a[href*="/jobs/"], a[href]',
-        org: '[class*="employer"], [class*="organisation"], [class*="organization"], [class*="recruiter"]',
+        title: 'h2, h3, [class*="title"], a',
+        org: '[class*="employer"], [class*="organisation"], [class*="organization"], [class*="recruiter"], [class*="company"]',
+        location: '[class*="location"], [class*="country"]',
+        description: 'p, [class*="description"], [class*="summary"]',
       }));
     }
+    // Playwright fallback if HTML parsing got nothing
     if (jobs.length < 3) jobs.push(...await parseProtectedPage(searchUrl, defaults, {
       card: 'li[class*="ResultsList"], article[class*="job"], .job-result, .c-card, li',
       link: 'a[href*="/naturecareers/job/"], a[href*="/jobs/"], a[href]',
@@ -749,7 +834,7 @@ async function scrapeNatureCareers() {
       minRenderedFallback: 1,
     }));
   }
-  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 4);
   console.log(`  Nature Careers: ${out.length} raw candidates`);
   return out;
 }
@@ -764,32 +849,44 @@ async function scrapeFindAPhD() {
     'molecular biology',
     'cell culture',
     'marie curie',
+    'cell biology',
+    'regenerative medicine',
+    'neuroscience',
   ];
   const urls = [];
   for (const q of queries) {
-    urls.push(`https://www.findaphd.com/phds/?Keywords=${encodeURIComponent(q)}`);
+    urls.push(`https://www.findaphd.com/phds/?Keywords=${encodeURIComponent(q)}&Funded=1`);
     urls.push(`https://www.findaphd.com/phds/biological-sciences/?Keywords=${encodeURIComponent(q)}`);
   }
+  // Country-specific pages — expand from 3 to all target countries
   urls.push(
     'https://www.findaphd.com/phds/sweden/biological-sciences/',
     'https://www.findaphd.com/phds/germany/biological-sciences/',
-    'https://www.findaphd.com/phds/netherlands/biological-sciences/'
+    'https://www.findaphd.com/phds/netherlands/biological-sciences/',
+    'https://www.findaphd.com/phds/denmark/biological-sciences/',
+    'https://www.findaphd.com/phds/belgium/biological-sciences/',
+    'https://www.findaphd.com/phds/switzerland/biological-sciences/',
+    // MSCA/Marie Curie funded positions — highest relevance
+    'https://www.findaphd.com/phds/?Keywords=marie+curie+msca&Funded=1',
+    'https://www.findaphd.com/phds/?Keywords=phd+immunology+europe&Funded=1',
+    'https://www.findaphd.com/phds/?Keywords=phd+stem+cell+europe&Funded=1',
   );
 
   for (const url of urls) {
     const defaults = { baseUrl: url, org: 'European University', country: 'germany', type: 'phd' };
     jobs.push(...await parseProtectedPage(url, defaults, {
-      card: '.phd-result, .FindAPhD-CombinedOppRow, article, div[class*="phd"], div[class*="result"]',
-      title: 'h3 a, h2 a, a[href*="/phds/project/"], a[href*="/phds/programme/"], .title a',
-      link: 'a[href*="/phds/project/"], a[href*="/phds/programme/"], h3 a, h2 a, a[href]',
-      org: '.phd-dept, .department, .uni-name, .institution, [class*="institution"], [class*="provider"]',
-      description: 'p.phd-summary, .description, p',
+      card: '.phd-result, .FindAPhD-CombinedOppRow, article, div[class*="phd"], div[class*="result"], .w-100',
+      title: 'h3 a, h2 a, a[href*="/phds/project/"], a[href*="/phds/programme/"], .title a, h4 a',
+      link: 'a[href*="/phds/project/"], a[href*="/phds/programme/"], h3 a, h2 a, h4 a, a[href]',
+      org: '.phd-dept, .department, .uni-name, .institution, [class*="institution"], [class*="provider"], [class*="university"]',
+      description: 'p.phd-summary, .description, p, [class*="summary"]',
+      location: '[class*="country"], [class*="location"], .location',
     }, {
       referer: 'https://www.findaphd.com/phds/',
-      waitForSelector: 'a[href*="/phds/project/"], a[href*="/phds/programme/"], .phd-result, article',
+      waitForSelector: 'a[href*="/phds/project/"], a[href*="/phds/programme/"], .phd-result, article, .w-100',
     }));
   }
-  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 4);
   console.log(`  FindAPhD: ${out.length} raw candidates`);
   return out;
 }
@@ -947,35 +1044,43 @@ async function scrapeDanishInstitutions() {
 async function scrapeEMBL() {
   const jobs = [];
   const workdayUrl = 'https://embl.wd103.myworkdayjobs.com/wday/cxs/embl/EMBL/jobs';
-  const payload = {
-    appliedFacets: {},
-    limit: 50,
-    offset: 0,
-    searchText: '',
-  };
-  const data = await safePost(workdayUrl, payload, {
-    referer: 'https://embl.wd103.myworkdayjobs.com/EMBL',
-  });
-  if (data) {
-    const defaults = {
-      org: 'EMBL',
-      country: 'germany',
-      location: 'Heidelberg',
-      baseUrl: 'https://embl.wd103.myworkdayjobs.com/EMBL',
-    };
-    for (const j of data.jobPostings || data.jobs || []) {
-      const location = jsonValue(j.locationsText || j.location || j.locations) || defaults.location;
-      pushJob(jobs, {
-        title: j.title || j.externalPath || '',
+
+  // Fetch all jobs and also keyword-specific searches
+  const workdaySearches = [
+    { searchText: '' }, // all jobs
+    { searchText: 'phd' },
+    { searchText: 'molecular biology' },
+    { searchText: 'cell biology' },
+    { searchText: 'epigenetics' },
+    { searchText: 'immunology' },
+  ];
+
+  for (const search of workdaySearches) {
+    const payload = { appliedFacets: {}, limit: 50, offset: 0, ...search };
+    const data = await safePost(workdayUrl, payload, {
+      referer: 'https://embl.wd103.myworkdayjobs.com/EMBL',
+    });
+    if (data) {
+      const defaults = {
         org: 'EMBL',
-        location,
-        country: resolveCountry(location) || 'germany',
-        description: j.bulletFields?.join(' ') || j.summary || '',
-        url: j.externalPath || j.url,
-        deadline: j.postedOn ? `📅 ${j.postedOn}` : undefined,
-      }, defaults);
+        country: 'germany',
+        location: 'Heidelberg',
+        baseUrl: 'https://embl.wd103.myworkdayjobs.com/EMBL',
+      };
+      for (const j of data.jobPostings || data.jobs || []) {
+        const location = jsonValue(j.locationsText || j.location || j.locations) || defaults.location;
+        pushJob(jobs, {
+          title: j.title || j.externalPath || '',
+          org: 'EMBL',
+          location,
+          country: resolveCountry(location) || 'germany',
+          description: j.bulletFields?.join(' ') || j.summary || '',
+          url: j.externalPath || j.url,
+          deadline: j.postedOn ? `📅 ${j.postedOn}` : undefined,
+        }, defaults);
+      }
+      jobs.push(...extractJobsFromJson(data, defaults));
     }
-    jobs.push(...extractJobsFromJson(data, defaults));
   }
 
   if (jobs.length < 2) {
@@ -1244,6 +1349,8 @@ function historicalFallbackJobs(liveJobs = []) {
       id: `hist-${fingerprint(j.title, j.org).replace(/[^a-z0-9]/g, '-').substring(0, 48)}`,
       source: 'fallback',
       fetchedAt: new Date().toISOString(),
+      // Preserve original dateFound — don't overwrite with today's date
+      dateFound: j.dateFound || j.cachedAt || new Date().toISOString(),
       tags: [...(j.tags || []).filter(t => !String(t).includes('Fallback')), 'Recent live'],
       why: `Preserved from a previous successful live scrape. ${j.why || ''}`.trim().substring(0, 180),
       _fp: fingerprint(j.title, j.org),
