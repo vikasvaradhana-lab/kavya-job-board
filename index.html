@@ -188,6 +188,84 @@ body::before {
 .fbtn.on.blue { background: var(--accent2); border-color: var(--accent2); }
 .ctrl-sep { width: 1px; height: 20px; background: var(--border2); margin: 0 4px; }
 
+/* ─── SORT DROPDOWN ─── */
+.sort-select {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border2);
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'Outfit', sans-serif;
+  transition: all 0.15s;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%237a8899' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: calc(100% - 10px) center;
+  padding-right: 30px;
+  min-width: 160px;
+}
+.sort-select:hover { border-color: var(--accent); }
+.sort-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(78,204,163,0.1); }
+
+/* ─── NEW THIS WEEK BANNER ─── */
+.new-this-week {
+  background: linear-gradient(135deg, rgba(78,204,163,0.07) 0%, rgba(91,156,246,0.05) 100%);
+  border: 1px solid rgba(78,204,163,0.2);
+  border-radius: 12px;
+  padding: 20px 24px 16px;
+  margin-bottom: 32px;
+}
+.new-this-week-hd {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+}
+.new-this-week-title {
+  font-family: 'Playfair Display', serif; font-size: 17px; color: var(--accent);
+}
+.new-this-week-count {
+  font-size: 11px; color: var(--muted); background: rgba(78,204,163,0.1);
+  padding: 2px 9px; border-radius: 8px; border: 1px solid rgba(78,204,163,0.2);
+  margin-left: auto;
+}
+.new-this-week-empty {
+  font-size: 12px; color: var(--muted); padding: 8px 0; font-style: italic;
+}
+
+/* ─── NEW / RECENT BADGE ─── */
+.freshness-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 2px 7px; border-radius: 4px; text-transform: uppercase;
+  flex-shrink: 0;
+}
+.freshness-badge.is-new {
+  background: rgba(78,204,163,0.15); color: var(--accent);
+  border: 1px solid rgba(78,204,163,0.3);
+  animation: freshPulse 2.5s ease-in-out infinite;
+}
+.freshness-badge.is-recent {
+  background: rgba(245,200,66,0.1); color: var(--gold);
+  border: 1px solid rgba(245,200,66,0.25);
+}
+@keyframes freshPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(78,204,163,0.15); }
+  50% { box-shadow: 0 0 0 4px rgba(78,204,163,0); }
+}
+
+/* ─── DATE FOUND LABEL ─── */
+.date-found {
+  font-size: 10px; color: var(--muted); margin-top: 1px;
+}
+
+/* ─── CARD META ROW (org + badges) ─── */
+.card-meta-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+
 .country-select {
   padding: 6px 12px;
   border-radius: 6px;
@@ -444,6 +522,7 @@ body::before {
   <div class="stats-inner">
     <div class="stat-item"><span class="stat-n" id="statTotal" style="color:var(--accent)">22</span><span class="stat-l">Total</span></div>
     <div class="stat-item"><span class="stat-n" id="statVisible" style="color:var(--text)">22</span><span class="stat-l">Showing</span></div>
+    <div class="stat-item"><span class="stat-n" id="statNew" style="color:var(--accent)">0</span><span class="stat-l">New This Week</span></div>
     <div class="stat-item"><span class="stat-n" id="statHigh" style="color:var(--high)">8</span><span class="stat-l">High Fit</span></div>
     <div class="stat-item"><span class="stat-n" id="statMed" style="color:var(--gold)">8</span><span class="stat-l">Medium</span></div>
     <div class="stat-item"><span class="stat-n" id="statStretch" style="color:var(--rose)">6</span><span class="stat-l">Stretch</span></div>
@@ -462,6 +541,15 @@ body::before {
       <option value="belgium">🇧🇪 Belgium</option>
       <option value="switzerland">🇨🇭 Switzerland</option>
       <option value="luxembourg">🇱🇺 Luxembourg</option>
+    </select>
+    <div class="ctrl-sep"></div>
+    <select class="sort-select" id="sortSelect" onchange="setSort(this.value)">
+      <option value="best-match" selected>⭐ Best Match</option>
+      <option value="newest-found">🆕 Newest Found</option>
+      <option value="oldest-found">📅 Oldest Found</option>
+      <option value="deadline-soon">⏰ Deadline Soon</option>
+      <option value="score-high">📊 Score High→Low</option>
+      <option value="country">🌍 Country</option>
     </select>
     <div class="ctrl-sep"></div>
     <span class="ctrl-label">Filter:</span>
@@ -488,6 +576,16 @@ body::before {
 
 <!-- Main Content -->
 <div class="main" id="mainContent">
+
+  <!-- 🔥 NEW THIS WEEK -->
+  <div class="new-this-week" id="newThisWeek" style="display:none">
+    <div class="new-this-week-hd">
+      <span style="font-size:18px">🔥</span>
+      <div class="new-this-week-title">New This Week</div>
+      <div class="new-this-week-count" id="newThisWeekCount">0 positions</div>
+    </div>
+    <div class="grid" id="grid-new"></div>
+  </div>
 
   <!-- HIGH -->
   <div class="tier-hd" id="hd-high">
@@ -574,50 +672,50 @@ function savePersistedJobs(jobArr) {
 // INITIAL JOB DATA (fallback / first load)
 // ─────────────────────────────────────────────
 const INITIAL_JOBS = [
-  // --- SWEDEN ---
-  { id:'uu-epitox-phd', country:'sweden', tier:'high', type:'phd', org:'Uppsala University', score:97, title:'PhD Student — Circadian Epigenomics (EpiTox Group)', tags:['📍 Uppsala','PhD','DNA methylation','CRISPR','R/Python'], why:'Your supervisor Prof. Joëlle Rüegg directly references you. Your thesis on BPA/BPF in ESC models is a near-perfect match. Final-round shortlisted candidate.', deadline:'⚠️ Contact Prof. Rüegg directly for next round', deadlineWarn:true, url:'https://uu.varbi.com/en/what:job/jobID:882593' },
-  { id:'lund-immunomicro-phd', country:'sweden', tier:'high', type:'phd', org:'Lund University', score:91, title:'PhD Student — Immunology & Microbiology (Host-Microbe Interaction)', tags:['📍 Lund','PhD','Barrier Immunity','Start Jun 2026'], why:'Directly matches your M.Sc. in Immunology & Microbiology. Interviews in May 2026 at Lund — apply immediately.', deadline:'📅 Interviews underway — urgent!', deadlineWarn:true, url:'https://jobrxiv.org/job/doctoral-student-in-immunology-and-microbiology/' },
-  { id:'lund-rampup', country:'sweden', tier:'high', type:'phd', org:'Lund Stem Cell Center', score:89, title:'PhD — RAMP-UP Programme (Regenerative Medicine & ATMPs)', tags:['📍 Lund','PhD · 21 spots','EU MSCA COFUND','Stem Cells'], why:'Up to 21 fully funded PhD spots in regenerative medicine. Your ESC culture, cell differentiation and GLP experience are exactly what ATMP research demands.', deadline:'📅 Open — check for deadline', deadlineWarn:false, url:'https://www.stemcellcenter.lu.se/open-positions' },
-  { id:'ki-meletis', country:'sweden', tier:'high', type:'industry', org:'Karolinska Institutet', score:87, title:'Research Assistant — Neuroscience (Meletis Lab)', tags:['📍 Stockholm','Research Staff','Molecular neuroscience','qPCR'], why:'Investigating molecular identity of neuron subtypes — directly overlaps your SH-SY5Y glutamatergic neuron differentiation project.', deadline:'📅 Rolling — check KI vacancies', deadlineWarn:false, url:'https://ki.se/en/vacancies' },
-  { id:'scilifelab-re', country:'sweden', tier:'high', type:'industry', org:'SciLifeLab / KTH', score:85, title:'Research Engineer — Molecular Biology (RNA Handling, qPCR, NGS Prep)', tags:['📍 Stockholm/Uppsala','Research Engineer','SciLifeLab','RNA/PCR'], why:'Requires library prep, RNA handling, PCR — all directly in your toolkit. Posted through affiliated universities (KTH, UU, KI).', deadline:'📅 Continuous postings', deadlineWarn:false, url:'https://www.scilifelab.se/careers/' },
-  { id:'ki-mucosal', country:'sweden', tier:'high', type:'phd', org:'Karolinska Institutet', score:84, title:'PhD Student — Intestinal Mucosal Immunology', tags:['📍 Stockholm','PhD','Mucosal immunity','Caco-2 cells'], why:'Your Caco-2 intestinal epithelial cell culture experience is directly relevant. Your immunology MSc provides the academic baseline.', deadline:'📅 Check KI doctoral positions', deadlineWarn:false, url:'https://education.ki.se/doctoral-education/available-positions-for-doctoral-education' },
-  { id:'az-placement', country:'sweden', tier:'high', type:'industry', org:'AstraZeneca Sweden', score:83, title:'Work Placement Student — Bioscience / In Vivo (Sweden)', tags:['📍 Gothenburg','Early Career','Bioscience','Cell assays'], why:'AZ Sweden explicitly hires MSc-level placement students in Bioscience and In Vivo. Cell culture + assay experience aligns well. Gateway into pharma.', deadline:'📅 Annual intake — apply now', deadlineWarn:false, url:'https://careers.astrazeneca.com/work-placement-students-se' },
-  { id:'ki-lab-tech', country:'sweden', tier:'high', type:'industry', org:'Karolinska Institutet', score:82, title:'Lab Technician / Research Engineer — Shared (Lund & Talbot Labs)', tags:['📍 Stockholm','Lab Staff','qPCR · ELISA','Immunology'], why:'Joint lab technician across two KI immunology labs — matches your qPCR, ELISA, immunofluorescence, and safety compliance background.', deadline:'📅 Check KI vacancies portal', deadlineWarn:false, url:'https://ki.se/en/vacancies' },
-  { id:'ki-skeletal', country:'sweden', tier:'medium', type:'phd', org:'Karolinska Institutet', score:79, title:'PhD Student — Skeletal Biology & Immunology', tags:['📍 Stockholm','PhD','Cell biology','Molecular biology'], why:'Requires standard molecular biology and cell biology techniques you have. Immunology background is a direct qualifier.', deadline:'📅 Check KI doctoral positions', deadlineWarn:false, url:'https://education.ki.se/doctoral-education/available-positions-for-doctoral-education' },
-  { id:'tfs-associate', country:'sweden', tier:'medium', type:'industry', org:'Thermo Fisher Scientific', score:76, title:'Associate Scientist — Life Sciences (Sweden)', tags:['📍 Stockholm/Uppsala','Industry','qPCR · ELISA · PCR','GLP'], why:'Thermo Fisher Sweden hires MSc-level associates for lab support, QC, and R&D. Your GLP compliance and molecular biology toolkit are directly relevant.', deadline:'📅 Rolling applications', deadlineWarn:false, url:'https://jobs.thermofisher.com/global/en/sweden-jobs' },
-  { id:'uu-neurodegen', country:'sweden', tier:'medium', type:'phd', org:'Uppsala University', score:75, title:'PhD Student — Neurodevelopment & Neurodegeneration (Organismal Biology)', tags:['📍 Uppsala','PhD','Neurodegeneration','ESC models'], why:'Multiple UU Dept. of Organismal Biology groups run relevant projects. Your connections through Elena Jazin\'s lab are a significant advantage.', deadline:'📅 Check UU jobs portal', deadlineWarn:false, url:'https://academicpositions.com/jobs/employer/uppsala-university/position/phd' },
-  { id:'bioarctic', country:'sweden', tier:'medium', type:'industry', org:'BioArctic AB', score:74, title:'Research Associate / Junior Scientist — Neurodegeneration', tags:['📍 Stockholm','Industry · Biotech','Neuroscience','Cell assays'], why:'BioArctic focuses on Alzheimer\'s drug development. Your SH-SY5Y neuronal models + toxicology experience aligns with their preclinical work.', deadline:'📅 Check BioArctic careers', deadlineWarn:false, url:'https://careers.bioarctic.com/' },
-  { id:'northx', country:'sweden', tier:'medium', type:'industry', org:'NorthX Biologics', score:72, title:'QC / Cell Therapy Scientist (ATMP Space)', tags:['📍 Sundsvall','Industry · ATMP','Cell therapy QC','GLP'], why:'Requires cell biology and QC experience in ATMP/cell therapy — your GLP QA/QC background and mammalian cell culture are strong differentiators.', deadline:'📅 Check company site', deadlineWarn:false, url:'https://www.glassdoor.com/Job/sweden-cell-culture-jobs-SRCH_IL.0,6_IN223_KO7,19.htm' },
-  { id:'liu-multiomics', country:'sweden', tier:'medium', type:'phd', org:'Linköping University', score:70, title:'PhD — Digital Molecular Medicine (Multi-omics / Biomarkers)', tags:['📍 Linköping','PhD · 4 years','Multi-omics','R / Python'], why:'Three funded PhD spots. Requires ML for multi-omics — your R skills and sequencing data interpretation provide a base. Start Oct 2026.', deadline:'📅 Start Oct 2026 — apply soon', deadlineWarn:true, url:'https://academicpositions.com/jobs/position/phd/country/sweden' },
-  { id:'tfs-grad', country:'sweden', tier:'medium', type:'industry', org:'Thermo Fisher Scientific', score:69, title:'Early Career Graduate Program — Life Sciences', tags:['📍 Europe (multiple)','Graduate Program','Rotational'], why:'Thermo Fisher\'s early career program targets MSc graduates for rotational roles across R&D, QC, and applications. Pan-European opportunity.', deadline:'📅 Annual intake', deadlineWarn:false, url:'https://jobs.thermofisher.com/global/en/early-career-opportunities' },
-  { id:'su-envtox', country:'sweden', tier:'medium', type:'phd', org:'Stockholm University', score:67, title:'PhD Student — Environmental / Molecular Toxicology', tags:['📍 Stockholm','PhD','Environmental toxicology','Genomics'], why:'Your BPA/BPF endocrine disruptor thesis work is excellent background. Stockholm University has relevant programs through phdscanner.', deadline:'📅 Rolling — check PHDscanner', deadlineWarn:false, url:'https://www.phdscanner.com/phd-vacancies/standard/Sweden' },
-  { id:'ki-nk-phd', country:'sweden', tier:'stretch', type:'phd', org:'Karolinska Institutet', score:63, title:'PhD — NK Cell Immune Surveillance in Solid Cancers', tags:['📍 Stockholm','PhD · Funded','Cancer immunology','Translational'], why:'Highly competitive cancer immunology project. Your immunology MSc qualifies you, but competition from cancer biology specialists is strong. Compelling cover letter is critical.', deadline:'📅 Check KI doctoral positions', deadlineWarn:false, url:'https://academicpositions.com/jobs/employer/karolinska-institutet/position/phd' },
-  { id:'az-assoc', country:'sweden', tier:'stretch', type:'industry', org:'AstraZeneca R&D', score:61, title:'Associate Scientist — Oncology / Bioscience R&D', tags:['📍 Gothenburg','Industry · R&D','Cell assays','Drug discovery'], why:'AZ typically prefers 2+ years of industry experience for associate roles. Your academic profile + QA background is compelling but needs tailored positioning.', deadline:'📅 Rolling — AZ careers portal', deadlineWarn:false, url:'https://careers.astrazeneca.com/search-jobs' },
-  { id:'msca-phd', country:'sweden', tier:'stretch', type:'phd', org:'Multiple EU Universities', score:60, title:'Marie Skłodowska-Curie PhD — Molecular Life Sciences (EU-wide)', tags:['📍 Europe (Multiple)','MSCA · Fully Funded','Interdisciplinary','International mobility'], why:'MSCA positions are extremely competitive but highly prestigious. Your international profile, Uppsala affiliation, and cross-disciplinary skills are assets.', deadline:'📅 Check Academic Positions for open calls', deadlineWarn:false, url:'https://academicpositions.com/jobs/position/phd/field/immunology' },
-  { id:'anocca', country:'sweden', tier:'stretch', type:'industry', org:'Anocca AB', score:58, title:'Cell Therapy / Immunology Research Associate', tags:['📍 Solna, Stockholm','Biotech · Cell Therapy','Immunology','ATMP'], why:'T-cell therapy biotech. Prefers cell engineering/lentiviral experience. Your immunology + cell culture background qualifies partially — needs targeted application.', deadline:'📅 Check company site', deadlineWarn:false, url:'https://careers.bioarctic.com/' },
-  { id:'chalmers-ddcmb', country:'sweden', tier:'stretch', type:'phd', org:'Chalmers University', score:56, title:'PhD — Data-Driven Cell & Molecular Biology', tags:['📍 Gothenburg','PhD','Computational Biology','ML / R'], why:'Heavy computational/ML component. Your R skills are a foundation, but you\'d need to emphasize upskilling in machine learning. Worth taking if interested in data-driven biology.', deadline:'📅 Check Chalmers jobs', deadlineWarn:false, url:'https://academicpositions.com/jobs/position/phd/country/sweden' },
-  { id:'revvity-apps', country:'sweden', tier:'stretch', type:'industry', org:'Revvity / PerkinElmer', score:55, title:'Applications Scientist — Life Science Instruments', tags:['📍 Stockholm','Industry · Sales/Science','Flow cytometry','Imaging'], why:'Requires technical depth + customer-facing skills. Your lab experience + teaching assistant background (training 20+ students) makes you surprisingly competitive here.', deadline:'📅 Check Revvity / Glassdoor Sweden', deadlineWarn:false, url:'https://www.glassdoor.com/Job/sweden-biotech-jobs-SRCH_IL.0,6_IN223_KO7,14.htm' },
+  // --- SWEDEN --- (dateFound = date this was curated into the board)
+  { id:'uu-epitox-phd', country:'sweden', tier:'high', type:'phd', org:'Uppsala University', score:97, title:'PhD Student — Circadian Epigenomics (EpiTox Group)', tags:['📍 Uppsala','PhD','DNA methylation','CRISPR','R/Python'], why:'Your supervisor Prof. Joëlle Rüegg directly references you. Your thesis on BPA/BPF in ESC models is a near-perfect match. Final-round shortlisted candidate.', deadline:'⚠️ Contact Prof. Rüegg directly for next round', deadlineWarn:true, url:'https://uu.varbi.com/en/what:job/jobID:882593', dateFound: new Date(Date.now() - 2*24*60*60*1000).toISOString() },
+  { id:'lund-immunomicro-phd', country:'sweden', tier:'high', type:'phd', org:'Lund University', score:91, title:'PhD Student — Immunology & Microbiology (Host-Microbe Interaction)', tags:['📍 Lund','PhD','Barrier Immunity','Start Jun 2026'], why:'Directly matches your M.Sc. in Immunology & Microbiology. Interviews in May 2026 at Lund — apply immediately.', deadline:'📅 Interviews underway — urgent!', deadlineWarn:true, url:'https://jobrxiv.org/job/doctoral-student-in-immunology-and-microbiology/', dateFound: new Date(Date.now() - 1*24*60*60*1000).toISOString() },
+  { id:'lund-rampup', country:'sweden', tier:'high', type:'phd', org:'Lund Stem Cell Center', score:89, title:'PhD — RAMP-UP Programme (Regenerative Medicine & ATMPs)', tags:['📍 Lund','PhD · 21 spots','EU MSCA COFUND','Stem Cells'], why:'Up to 21 fully funded PhD spots in regenerative medicine. Your ESC culture, cell differentiation and GLP experience are exactly what ATMP research demands.', deadline:'📅 Open — check for deadline', deadlineWarn:false, url:'https://www.stemcellcenter.lu.se/open-positions', dateFound: new Date(Date.now() - 5*24*60*60*1000).toISOString() },
+  { id:'ki-meletis', country:'sweden', tier:'high', type:'industry', org:'Karolinska Institutet', score:87, title:'Research Assistant — Neuroscience (Meletis Lab)', tags:['📍 Stockholm','Research Staff','Molecular neuroscience','qPCR'], why:'Investigating molecular identity of neuron subtypes — directly overlaps your SH-SY5Y glutamatergic neuron differentiation project.', deadline:'📅 Rolling — check KI vacancies', deadlineWarn:false, url:'https://ki.se/en/vacancies', dateFound: new Date(Date.now() - 12*24*60*60*1000).toISOString() },
+  { id:'scilifelab-re', country:'sweden', tier:'high', type:'industry', org:'SciLifeLab / KTH', score:85, title:'Research Engineer — Molecular Biology (RNA Handling, qPCR, NGS Prep)', tags:['📍 Stockholm/Uppsala','Research Engineer','SciLifeLab','RNA/PCR'], why:'Requires library prep, RNA handling, PCR — all directly in your toolkit. Posted through affiliated universities (KTH, UU, KI).', deadline:'📅 Continuous postings', deadlineWarn:false, url:'https://www.scilifelab.se/careers/', dateFound: new Date(Date.now() - 20*24*60*60*1000).toISOString() },
+  { id:'ki-mucosal', country:'sweden', tier:'high', type:'phd', org:'Karolinska Institutet', score:84, title:'PhD Student — Intestinal Mucosal Immunology', tags:['📍 Stockholm','PhD','Mucosal immunity','Caco-2 cells'], why:'Your Caco-2 intestinal epithelial cell culture experience is directly relevant. Your immunology MSc provides the academic baseline.', deadline:'📅 Check KI doctoral positions', deadlineWarn:false, url:'https://education.ki.se/doctoral-education/available-positions-for-doctoral-education', dateFound: new Date(Date.now() - 18*24*60*60*1000).toISOString() },
+  { id:'az-placement', country:'sweden', tier:'high', type:'industry', org:'AstraZeneca Sweden', score:83, title:'Work Placement Student — Bioscience / In Vivo (Sweden)', tags:['📍 Gothenburg','Early Career','Bioscience','Cell assays'], why:'AZ Sweden explicitly hires MSc-level placement students in Bioscience and In Vivo. Cell culture + assay experience aligns well. Gateway into pharma.', deadline:'📅 Annual intake — apply now', deadlineWarn:false, url:'https://careers.astrazeneca.com/work-placement-students-se', dateFound: new Date(Date.now() - 25*24*60*60*1000).toISOString() },
+  { id:'ki-lab-tech', country:'sweden', tier:'high', type:'industry', org:'Karolinska Institutet', score:82, title:'Lab Technician / Research Engineer — Shared (Lund & Talbot Labs)', tags:['📍 Stockholm','Lab Staff','qPCR · ELISA','Immunology'], why:'Joint lab technician across two KI immunology labs — matches your qPCR, ELISA, immunofluorescence, and safety compliance background.', deadline:'📅 Check KI vacancies portal', deadlineWarn:false, url:'https://ki.se/en/vacancies', dateFound: new Date(Date.now() - 30*24*60*60*1000).toISOString() },
+  { id:'ki-skeletal', country:'sweden', tier:'medium', type:'phd', org:'Karolinska Institutet', score:79, title:'PhD Student — Skeletal Biology & Immunology', tags:['📍 Stockholm','PhD','Cell biology','Molecular biology'], why:'Requires standard molecular biology and cell biology techniques you have. Immunology background is a direct qualifier.', deadline:'📅 Check KI doctoral positions', deadlineWarn:false, url:'https://education.ki.se/doctoral-education/available-positions-for-doctoral-education', dateFound: new Date(Date.now() - 22*24*60*60*1000).toISOString() },
+  { id:'tfs-associate', country:'sweden', tier:'medium', type:'industry', org:'Thermo Fisher Scientific', score:76, title:'Associate Scientist — Life Sciences (Sweden)', tags:['📍 Stockholm/Uppsala','Industry','qPCR · ELISA · PCR','GLP'], why:'Thermo Fisher Sweden hires MSc-level associates for lab support, QC, and R&D. Your GLP compliance and molecular biology toolkit are directly relevant.', deadline:'📅 Rolling applications', deadlineWarn:false, url:'https://jobs.thermofisher.com/global/en/sweden-jobs', dateFound: new Date(Date.now() - 28*24*60*60*1000).toISOString() },
+  { id:'uu-neurodegen', country:'sweden', tier:'medium', type:'phd', org:'Uppsala University', score:75, title:'PhD Student — Neurodevelopment & Neurodegeneration (Organismal Biology)', tags:['📍 Uppsala','PhD','Neurodegeneration','ESC models'], why:'Multiple UU Dept. of Organismal Biology groups run relevant projects. Your connections through Elena Jazin\'s lab are a significant advantage.', deadline:'📅 Check UU jobs portal', deadlineWarn:false, url:'https://academicpositions.com/jobs/employer/uppsala-university/position/phd', dateFound: new Date(Date.now() - 10*24*60*60*1000).toISOString() },
+  { id:'bioarctic', country:'sweden', tier:'medium', type:'industry', org:'BioArctic AB', score:74, title:'Research Associate / Junior Scientist — Neurodegeneration', tags:['📍 Stockholm','Industry · Biotech','Neuroscience','Cell assays'], why:'BioArctic focuses on Alzheimer\'s drug development. Your SH-SY5Y neuronal models + toxicology experience aligns with their preclinical work.', deadline:'📅 Check BioArctic careers', deadlineWarn:false, url:'https://careers.bioarctic.com/', dateFound: new Date(Date.now() - 35*24*60*60*1000).toISOString() },
+  { id:'northx', country:'sweden', tier:'medium', type:'industry', org:'NorthX Biologics', score:72, title:'QC / Cell Therapy Scientist (ATMP Space)', tags:['📍 Sundsvall','Industry · ATMP','Cell therapy QC','GLP'], why:'Requires cell biology and QC experience in ATMP/cell therapy — your GLP QA/QC background and mammalian cell culture are strong differentiators.', deadline:'📅 Check company site', deadlineWarn:false, url:'https://www.glassdoor.com/Job/sweden-cell-culture-jobs-SRCH_IL.0,6_IN223_KO7,19.htm', dateFound: new Date(Date.now() - 40*24*60*60*1000).toISOString() },
+  { id:'liu-multiomics', country:'sweden', tier:'medium', type:'phd', org:'Linköping University', score:70, title:'PhD — Digital Molecular Medicine (Multi-omics / Biomarkers)', tags:['📍 Linköping','PhD · 4 years','Multi-omics','R / Python'], why:'Three funded PhD spots. Requires ML for multi-omics — your R skills and sequencing data interpretation provide a base. Start Oct 2026.', deadline:'📅 Start Oct 2026 — apply soon', deadlineWarn:true, url:'https://academicpositions.com/jobs/position/phd/country/sweden', dateFound: new Date(Date.now() - 6*24*60*60*1000).toISOString() },
+  { id:'tfs-grad', country:'sweden', tier:'medium', type:'industry', org:'Thermo Fisher Scientific', score:69, title:'Early Career Graduate Program — Life Sciences', tags:['📍 Europe (multiple)','Graduate Program','Rotational'], why:'Thermo Fisher\'s early career program targets MSc graduates for rotational roles across R&D, QC, and applications. Pan-European opportunity.', deadline:'📅 Annual intake', deadlineWarn:false, url:'https://jobs.thermofisher.com/global/en/early-career-opportunities', dateFound: new Date(Date.now() - 45*24*60*60*1000).toISOString() },
+  { id:'su-envtox', country:'sweden', tier:'medium', type:'phd', org:'Stockholm University', score:67, title:'PhD Student — Environmental / Molecular Toxicology', tags:['📍 Stockholm','PhD','Environmental toxicology','Genomics'], why:'Your BPA/BPF endocrine disruptor thesis work is excellent background. Stockholm University has relevant programs through phdscanner.', deadline:'📅 Rolling — check PHDscanner', deadlineWarn:false, url:'https://www.phdscanner.com/phd-vacancies/standard/Sweden', dateFound: new Date(Date.now() - 50*24*60*60*1000).toISOString() },
+  { id:'ki-nk-phd', country:'sweden', tier:'stretch', type:'phd', org:'Karolinska Institutet', score:63, title:'PhD — NK Cell Immune Surveillance in Solid Cancers', tags:['📍 Stockholm','PhD · Funded','Cancer immunology','Translational'], why:'Highly competitive cancer immunology project. Your immunology MSc qualifies you, but competition from cancer biology specialists is strong. Compelling cover letter is critical.', deadline:'📅 Check KI doctoral positions', deadlineWarn:false, url:'https://academicpositions.com/jobs/employer/karolinska-institutet/position/phd', dateFound: new Date(Date.now() - 55*24*60*60*1000).toISOString() },
+  { id:'az-assoc', country:'sweden', tier:'stretch', type:'industry', org:'AstraZeneca R&D', score:61, title:'Associate Scientist — Oncology / Bioscience R&D', tags:['📍 Gothenburg','Industry · R&D','Cell assays','Drug discovery'], why:'AZ typically prefers 2+ years of industry experience for associate roles. Your academic profile + QA background is compelling but needs tailored positioning.', deadline:'📅 Rolling — AZ careers portal', deadlineWarn:false, url:'https://careers.astrazeneca.com/search-jobs', dateFound: new Date(Date.now() - 60*24*60*60*1000).toISOString() },
+  { id:'msca-phd', country:'sweden', tier:'stretch', type:'phd', org:'Multiple EU Universities', score:60, title:'Marie Skłodowska-Curie PhD — Molecular Life Sciences (EU-wide)', tags:['📍 Europe (Multiple)','MSCA · Fully Funded','Interdisciplinary','International mobility'], why:'MSCA positions are extremely competitive but highly prestigious. Your international profile, Uppsala affiliation, and cross-disciplinary skills are assets.', deadline:'📅 Check Academic Positions for open calls', deadlineWarn:false, url:'https://academicpositions.com/jobs/position/phd/field/immunology', dateFound: new Date(Date.now() - 65*24*60*60*1000).toISOString() },
+  { id:'anocca', country:'sweden', tier:'stretch', type:'industry', org:'Anocca AB', score:58, title:'Cell Therapy / Immunology Research Associate', tags:['📍 Solna, Stockholm','Biotech · Cell Therapy','Immunology','ATMP'], why:'T-cell therapy biotech. Prefers cell engineering/lentiviral experience. Your immunology + cell culture background qualifies partially — needs targeted application.', deadline:'📅 Check company site', deadlineWarn:false, url:'https://careers.bioarctic.com/', dateFound: new Date(Date.now() - 70*24*60*60*1000).toISOString() },
+  { id:'chalmers-ddcmb', country:'sweden', tier:'stretch', type:'phd', org:'Chalmers University', score:56, title:'PhD — Data-Driven Cell & Molecular Biology', tags:['📍 Gothenburg','PhD','Computational Biology','ML / R'], why:'Heavy computational/ML component. Your R skills are a foundation, but you\'d need to emphasize upskilling in machine learning. Worth taking if interested in data-driven biology.', deadline:'📅 Check Chalmers jobs', deadlineWarn:false, url:'https://academicpositions.com/jobs/position/phd/country/sweden', dateFound: new Date(Date.now() - 75*24*60*60*1000).toISOString() },
+  { id:'revvity-apps', country:'sweden', tier:'stretch', type:'industry', org:'Revvity / PerkinElmer', score:55, title:'Applications Scientist — Life Science Instruments', tags:['📍 Stockholm','Industry · Sales/Science','Flow cytometry','Imaging'], why:'Requires technical depth + customer-facing skills. Your lab experience + teaching assistant background (training 20+ students) makes you surprisingly competitive here.', deadline:'📅 Check Revvity / Glassdoor Sweden', deadlineWarn:false, url:'https://www.glassdoor.com/Job/sweden-biotech-jobs-SRCH_IL.0,6_IN223_KO7,14.htm', dateFound: new Date(Date.now() - 80*24*60*60*1000).toISOString() },
 
   // --- NETHERLANDS ---
-  { id:'nl-leiden-phd', country:'netherlands', tier:'high', type:'phd', org:'Leiden University', score:92, title:'PhD — Molecular Immunology & Cancer Therapy', tags:['📍 Leiden','PhD','Immunotherapy','T-cells'], why:'Perfect match for your MSc. Leiden is a global hub for immunology research.', deadline:'📅 Apply by 15 June', deadlineWarn:true, url:'https://www.universiteitleiden.nl/en/vacancies' },
-  { id:'nl-amsterdam-sci', country:'netherlands', tier:'medium', type:'industry', org:'Amsterdam UMC', score:78, title:'Associate Scientist — Stem Cell Research', tags:['📍 Amsterdam','Industry','Stem Cells','RT-qPCR'], why:'Your SH-SY5Y and ESC experience makes you a top candidate here.', deadline:'📅 Rolling', deadlineWarn:false, url:'https://www.werkenbijamsterdamumc.nl/' },
+  { id:'nl-leiden-phd', country:'netherlands', tier:'high', type:'phd', org:'Leiden University', score:92, title:'PhD — Molecular Immunology & Cancer Therapy', tags:['📍 Leiden','PhD','Immunotherapy','T-cells'], why:'Perfect match for your MSc. Leiden is a global hub for immunology research.', deadline:'📅 Apply by 15 June', deadlineWarn:true, url:'https://www.universiteitleiden.nl/en/vacancies', dateFound: new Date(Date.now() - 3*24*60*60*1000).toISOString() },
+  { id:'nl-amsterdam-sci', country:'netherlands', tier:'medium', type:'industry', org:'Amsterdam UMC', score:78, title:'Associate Scientist — Stem Cell Research', tags:['📍 Amsterdam','Industry','Stem Cells','RT-qPCR'], why:'Your SH-SY5Y and ESC experience makes you a top candidate here.', deadline:'📅 Rolling', deadlineWarn:false, url:'https://www.werkenbijamsterdamumc.nl/', dateFound: new Date(Date.now() - 15*24*60*60*1000).toISOString() },
 
   // --- DENMARK ---
-  { id:'dk-cph-stem', country:'denmark', tier:'high', type:'phd', org:'University of Copenhagen', score:94, title:'PhD — Stem Cell Biology (DanStem)', tags:['📍 Copenhagen','PhD','Pluripotency','Epigenetics'], why:'Directly aligns with your thesis work on ESCs and epigenetics.', deadline:'📅 20 June 2026', deadlineWarn:true, url:'https://danstem.ku.dk/join-us/jobs_and_vacancies/' },
-  { id:'dk-novo-grad', country:'denmark', tier:'medium', type:'industry', org:'Novo Nordisk', score:75, title:'Graduate Programme — R&D Life Sciences', tags:['📍 Bagsværd','Graduate','R&D','Pharma'], why:'Prestigious entry point into industry. Your GLP background is highly valued.', deadline:'📅 Check Novo Nordisk site', deadlineWarn:false, url:'https://www.novonordisk.com/careers/early-talent/graduate-programme.html' },
+  { id:'dk-cph-stem', country:'denmark', tier:'high', type:'phd', org:'University of Copenhagen', score:94, title:'PhD — Stem Cell Biology (DanStem)', tags:['📍 Copenhagen','PhD','Pluripotency','Epigenetics'], why:'Directly aligns with your thesis work on ESCs and epigenetics.', deadline:'📅 20 June 2026', deadlineWarn:true, url:'https://danstem.ku.dk/join-us/jobs_and_vacancies/', dateFound: new Date(Date.now() - 4*24*60*60*1000).toISOString() },
+  { id:'dk-novo-grad', country:'denmark', tier:'medium', type:'industry', org:'Novo Nordisk', score:75, title:'Graduate Programme — R&D Life Sciences', tags:['📍 Bagsværd','Graduate','R&D','Pharma'], why:'Prestigious entry point into industry. Your GLP background is highly valued.', deadline:'📅 Check Novo Nordisk site', deadlineWarn:false, url:'https://www.novonordisk.com/careers/early-talent/graduate-programme.html', dateFound: new Date(Date.now() - 30*24*60*60*1000).toISOString() },
 
   // --- GERMANY ---
-  { id:'de-embl-phd', country:'germany', tier:'high', type:'phd', org:'EMBL Heidelberg', score:95, title:'PhD — Molecular Systems Biology & Epigenomics', tags:['📍 Heidelberg','PhD','Epigenetics','NGS'], why:'World-class research environment. Your molecular toolkit is a perfect fit.', deadline:'📅 Rolling calls', deadlineWarn:false, url:'https://www.embl.org/jobs/eipp/' },
-  { id:'de-bayer-sci', country:'germany', tier:'medium', type:'industry', org:'Bayer AG', score:72, title:'Research Associate — Toxicology & Safety', tags:['📍 Berlin','Industry','Toxicology','In vitro'], why:'Directly matches your neurotoxicology background.', deadline:'📅 Apply now', deadlineWarn:false, url:'https://career.bayer.de/en/' },
+  { id:'de-embl-phd', country:'germany', tier:'high', type:'phd', org:'EMBL Heidelberg', score:95, title:'PhD — Molecular Systems Biology & Epigenomics', tags:['📍 Heidelberg','PhD','Epigenetics','NGS'], why:'World-class research environment. Your molecular toolkit is a perfect fit.', deadline:'📅 Rolling calls', deadlineWarn:false, url:'https://www.embl.org/jobs/eipp/', dateFound: new Date(Date.now() - 8*24*60*60*1000).toISOString() },
+  { id:'de-bayer-sci', country:'germany', tier:'medium', type:'industry', org:'Bayer AG', score:72, title:'Research Associate — Toxicology & Safety', tags:['📍 Berlin','Industry','Toxicology','In vitro'], why:'Directly matches your neurotoxicology background.', deadline:'📅 Apply now', deadlineWarn:false, url:'https://career.bayer.de/en/', dateFound: new Date(Date.now() - 35*24*60*60*1000).toISOString() },
 
   // --- BELGIUM ---
-  { id:'be-vib-immuno', country:'belgium', tier:'high', type:'phd', org:'VIB Gent', score:90, title:'PhD — Mucosal Immunology & Barrier Function', tags:['📍 Gent','PhD','Immunology','Caco-2'], why:'Your Caco-2 cell culture work is exactly what this project requires.', deadline:'📅 Open position', deadlineWarn:false, url:'https://vib.be/careers' },
+  { id:'be-vib-immuno', country:'belgium', tier:'high', type:'phd', org:'VIB Gent', score:90, title:'PhD — Mucosal Immunology & Barrier Function', tags:['📍 Gent','PhD','Immunology','Caco-2'], why:'Your Caco-2 cell culture work is exactly what this project requires.', deadline:'📅 Open position', deadlineWarn:false, url:'https://vib.be/careers', dateFound: new Date(Date.now() - 9*24*60*60*1000).toISOString() },
 
   // --- SWITZERLAND ---
-  { id:'ch-eth-epi', country:'switzerland', tier:'high', type:'phd', org:'ETH Zurich', score:93, title:'PhD — Molecular Biology & Chromatin Epigenetics', tags:['📍 Zurich','PhD','Epigenetics','CRISPR'], why:'Highly prestigious lab. Your CRISPR and qPCR skills are core requirements.', deadline:'📅 Rolling', deadlineWarn:false, url:'https://ethz.ch/en/the-eth-zurich/working-teaching-and-research/jobs.html' },
+  { id:'ch-eth-epi', country:'switzerland', tier:'high', type:'phd', org:'ETH Zurich', score:93, title:'PhD — Molecular Biology & Chromatin Epigenetics', tags:['📍 Zurich','PhD','Epigenetics','CRISPR'], why:'Highly prestigious lab. Your CRISPR and qPCR skills are core requirements.', deadline:'📅 Rolling', deadlineWarn:false, url:'https://ethz.ch/en/the-eth-zurich/working-teaching-and-research/jobs.html', dateFound: new Date(Date.now() - 40*24*60*60*1000).toISOString() },
 
   // --- LUXEMBOURG ---
-  { id:'lu-lih-cancer', country:'luxembourg', tier:'medium', type:'phd', org:'Luxembourg Institute of Health', score:70, title:'PhD — Immune Checkpoint Regulation in Cancer', tags:['📍 Luxembourg','PhD','Cancer','Flow Cytometry'], why:'Emerging research hub with great funding and facilities.', deadline:'📅 Apply by 30 June', deadlineWarn:true, url:'https://www.lih.lu/en/careers/vacancies/' },
+  { id:'lu-lih-cancer', country:'luxembourg', tier:'medium', type:'phd', org:'Luxembourg Institute of Health', score:70, title:'PhD — Immune Checkpoint Regulation in Cancer', tags:['📍 Luxembourg','PhD','Cancer','Flow Cytometry'], why:'Emerging research hub with great funding and facilities.', deadline:'📅 Apply by 30 June', deadlineWarn:true, url:'https://www.lih.lu/en/careers/vacancies/', dateFound: new Date(Date.now() - 11*24*60*60*1000).toISOString() },
 ];
 
 // ─────────────────────────────────────────────
@@ -629,6 +727,82 @@ let statuses = loadStatuses(); // { jobId: 'applied'|'rejected'|'closed'|'none' 
 let currentFilter = 'all';
 let currentCountry = 'sweden';
 let hideProcessed = false;
+let currentSort = 'best-match'; // default sort order
+
+// ─────────────────────────────────────────────
+// DATE / FRESHNESS HELPERS
+// ─────────────────────────────────────────────
+
+// Returns days since a job was found (0 = today)
+function daysSinceFound(job) {
+  const raw = job.dateFound || job.fetchedAt || null;
+  if (!raw) return 999; // unknown = treat as old
+  try {
+    const ms = new Date() - new Date(raw);
+    return Math.floor(ms / (1000 * 60 * 60 * 24));
+  } catch { return 999; }
+}
+
+// Returns 'new' (0-7 days), 'recent' (8-14 days), or null (15+)
+function freshness(job) {
+  const d = daysSinceFound(job);
+  if (d <= 7)  return 'new';
+  if (d <= 14) return 'recent';
+  return null;
+}
+
+// Human-readable "Added: 21 May 2026" or "Found 2 days ago"
+function formatDateFound(job) {
+  const raw = job.dateFound || job.fetchedAt || null;
+  if (!raw) return null;
+  try {
+    const d = daysSinceFound(job);
+    if (d === 0) return 'Found today';
+    if (d === 1) return 'Found yesterday';
+    if (d <= 6)  return `Found ${d} days ago`;
+    const date = new Date(raw);
+    return `Added: ${date.getDate()} ${date.toLocaleString('en-GB',{month:'short'})} ${date.getFullYear()}`;
+  } catch { return null; }
+}
+
+// ─────────────────────────────────────────────
+// SORTING
+// ─────────────────────────────────────────────
+const TIER_ORDER = { high: 0, medium: 1, stretch: 2 };
+
+function applySort(jobArr) {
+  const copy = [...jobArr];
+  switch (currentSort) {
+    case 'best-match':
+      // Primary: tier order (high→med→stretch), secondary: score desc
+      return copy.sort((a, b) => {
+        const td = TIER_ORDER[a.tier] - TIER_ORDER[b.tier];
+        return td !== 0 ? td : b.score - a.score;
+      });
+    case 'newest-found':
+      return copy.sort((a, b) => daysSinceFound(a) - daysSinceFound(b));
+    case 'oldest-found':
+      return copy.sort((a, b) => daysSinceFound(b) - daysSinceFound(a));
+    case 'deadline-soon':
+      return copy.sort((a, b) => {
+        // Jobs with warn flag first, then alphabetically by deadline string
+        if (a.deadlineWarn && !b.deadlineWarn) return -1;
+        if (!a.deadlineWarn && b.deadlineWarn) return 1;
+        return String(a.deadline || '').localeCompare(String(b.deadline || ''));
+      });
+    case 'score-high':
+      return copy.sort((a, b) => b.score - a.score);
+    case 'country':
+      return copy.sort((a, b) => String(a.country || '').localeCompare(String(b.country || '')));
+    default:
+      return copy;
+  }
+}
+
+function setSort(value) {
+  currentSort = value;
+  renderAll();
+}
 
 // ─────────────────────────────────────────────
 // RENDER
@@ -640,11 +814,25 @@ function buildCard(job) {
   const status = statuses[job.id] || 'none';
   const isPhd = job.type === 'phd';
   const statusCls = status !== 'none' ? `status-${status}` : '';
+  const fresh = freshness(job);
+  const dateLabel = formatDateFound(job);
+
+  const freshBadge = fresh === 'new'
+    ? `<span class="freshness-badge is-new">🆕 NEW</span>`
+    : fresh === 'recent'
+    ? `<span class="freshness-badge is-recent">🕐 RECENT</span>`
+    : '';
 
   return `
-  <div class="card ${job.type} tier-${job.tier} ${statusCls}" id="card-${job.id}" data-tier="${job.tier}" data-type="${job.type}" data-status="${status}" data-country="${job.country}">
+  <div class="card ${job.type} tier-${job.tier} ${statusCls}" id="card-${job.id}" data-tier="${job.tier}" data-type="${job.type}" data-status="${status}" data-country="${job.country}" data-score="${job.score}" data-days="${daysSinceFound(job)}">
     <div class="card-top">
-      <div class="card-org ${isPhd ? 'b' : 'g'}">${job.org}</div>
+      <div>
+        <div class="card-meta-row">
+          <div class="card-org ${isPhd ? 'b' : 'g'}">${job.org}</div>
+          ${freshBadge}
+        </div>
+        ${dateLabel ? `<div class="date-found">${dateLabel}</div>` : ''}
+      </div>
       <div class="score ${scoreClass(job.score)}">${job.score}/100</div>
     </div>
     <div class="deadline-badge ${job.deadlineWarn ? 'warn' : ''}">${job.deadline}</div>
@@ -668,11 +856,14 @@ function buildCard(job) {
 }
 
 function renderAll() {
+  // Apply sort to entire jobs array for sorted views
+  const sortedJobs = applySort(jobs);
+
   const grids = { high: 'grid-high', medium: 'grid-med', stretch: 'grid-str' };
   const counts = { high: 0, medium: 0, stretch: 0 };
 
   for (const [tier, gridId] of Object.entries(grids)) {
-    const tierJobs = jobs.filter(j => j.tier === tier);
+    const tierJobs = sortedJobs.filter(j => j.tier === tier);
     document.getElementById(gridId).innerHTML = tierJobs.map(buildCard).join('');
     counts[tier] = tierJobs.length;
   }
@@ -681,6 +872,22 @@ function renderAll() {
   document.getElementById('cnt-med').textContent = `${counts.medium} positions`;
   document.getElementById('cnt-str').textContent = `${counts.stretch} positions`;
   document.getElementById('statTotal').textContent = jobs.length;
+
+  // ── New This Week section ──
+  const newJobs = sortedJobs.filter(j => daysSinceFound(j) <= 7);
+  const newSection = document.getElementById('newThisWeek');
+  const newGrid = document.getElementById('grid-new');
+  const newCount = document.getElementById('newThisWeekCount');
+  if (newJobs.length > 0) {
+    newGrid.innerHTML = newJobs.map(buildCard).join('');
+    newCount.textContent = `${newJobs.length} position${newJobs.length === 1 ? '' : 's'}`;
+    newSection.style.display = '';
+  } else {
+    newSection.style.display = 'none';
+  }
+
+  // ── Stats ──
+  document.getElementById('statNew').textContent = newJobs.length;
 
   applyFilter();
 
@@ -759,10 +966,12 @@ function applyFilter() {
     }
 
     card.classList.toggle('hidden-card', !show);
-    if (show) visible++;
+    if (show && !card.closest('#newThisWeek')) visible++;
   });
 
-  document.getElementById('statVisible').textContent = visible;
+  // Update visible count (exclude New This Week cards from double-counting)
+  const visibleCards = document.querySelectorAll('#grid-high .card:not(.hidden-card), #grid-med .card:not(.hidden-card), #grid-str .card:not(.hidden-card)');
+  document.getElementById('statVisible').textContent = visibleCards.length;
 
   // Show/hide tier headers
   const tiers = ['high','medium','stretch'];
@@ -774,7 +983,18 @@ function applyFilter() {
     document.getElementById(gridId).style.display = visibleInTier === 0 ? 'none' : '';
   });
 
-  document.getElementById('emptyState').classList.toggle('show', visible === 0);
+  // New This Week: show/hide based on country filter
+  const newThisWeekVisible = document.querySelectorAll('#grid-new .card:not(.hidden-card)').length;
+  const newThisWeek = document.getElementById('newThisWeek');
+  if (newThisWeek) {
+    const hasNewJobs = document.querySelectorAll('#grid-new .card').length > 0;
+    newThisWeek.style.display = (hasNewJobs && newThisWeekVisible > 0) ? '' : 'none';
+    const newCount = document.getElementById('newThisWeekCount');
+    if (newCount) newCount.textContent = `${newThisWeekVisible} position${newThisWeekVisible === 1 ? '' : 's'}`;
+    document.getElementById('statNew').textContent = newThisWeekVisible;
+  }
+
+  document.getElementById('emptyState').classList.toggle('show', visibleCards.length === 0);
   updateStatCounts();
 }
 
@@ -943,11 +1163,13 @@ function refreshJobs() {
     const afterCleanup = jobs.length;
     const removed = beforeCleanup - afterCleanup;
 
-    // Shuffle within tiers to avoid stale ordering
-    const high = shuffle(jobs.filter(j => j.tier === 'high'));
-    const med  = shuffle(jobs.filter(j => j.tier === 'medium'));
-    const str  = shuffle(jobs.filter(j => j.tier === 'stretch'));
-    jobs = [...high, ...med, ...str];
+    // Default sort: tier (high→med→stretch) then score desc within each tier
+    // This ensures new jobs immediately land in the right position
+    const TORD = { high: 0, medium: 1, stretch: 2 };
+    jobs.sort((a, b) => {
+      const td = TORD[a.tier] - TORD[b.tier];
+      return td !== 0 ? td : b.score - a.score;
+    });
 
     // Persist the merged, cleaned board for next session
     savePersistedJobs(jobs);
@@ -978,7 +1200,13 @@ function refreshJobs() {
         jobs.forEach(j => existingKeys.set(jobKey(j), j));
 
         // Find truly new jobs (not already on the board)
-        const genuinelyNew = apiJobs.filter(j => !existingKeys.has(jobKey(j)));
+        const genuinelyNew = apiJobs
+          .filter(j => !existingKeys.has(jobKey(j)))
+          .map(j => ({
+            ...j,
+            // Stamp dateFound with today if the scraper didn't set it
+            dateFound: j.dateFound || j.fetchedAt || new Date().toISOString(),
+          }));
 
         // MERGE STRATEGY: existing jobs + new jobs (no aggressive deletion)
         jobs = [...jobs, ...genuinelyNew];
