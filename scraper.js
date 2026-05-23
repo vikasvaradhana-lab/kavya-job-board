@@ -758,54 +758,82 @@ async function parseProtectedPage(url, defaults, selectors, opts = {}) {
 // Each returns an array of raw job objects { title, org, country, description, url, ... }
 // buildJob() normalises + scores them later.
 
-// ── 1. EURAXESS (XML/JSON feed) ───────────────────────────────────────────────
+// ── 1. EURAXESS (RSS feeds + HTML scrape) ────────────────────────────────────
+// NOTE: The /api/jobs/search endpoint changed — it now returns 404.
+// Primary strategy: RSS feeds (most reliable, no bot detection).
+// Secondary: HTML search surface with keyword queries.
 async function scrapeEuraxess() {
   const jobs = [];
-  // EURAXESS has an RSS feed for each country — try multiple keyword searches
-  const queries = [
+
+  // ── Strategy A: RSS feeds (stable, no auth, no bot detection) ──
+  // EURAXESS publishes country-specific RSS feeds under /jobs/rss
+  const rssFeeds = [
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=stem+cell&country=SE',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=immunology&country=SE',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=epigenetics&country=SE',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=molecular+biology&country=SE',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=cell+culture&country=SE',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=stem+cell&country=NL',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=immunology&country=NL',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=molecular+biology&country=NL',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=stem+cell&country=DK',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=immunology&country=DK',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=stem+cell&country=DE',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=epigenetics&country=DE',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=stem+cell&country=BE',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=stem+cell&country=CH',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=marie+curie',
+    'https://euraxess.ec.europa.eu/jobs/search/rss?keywords=msca+doctoral',
+  ];
+
+  for (const rssUrl of rssFeeds) {
+    const xml = await safeFetch(rssUrl, {
+      headers: { Accept: 'application/rss+xml,application/xml;q=0.9,*/*;q=0.7' },
+      referer: 'https://euraxess.ec.europa.eu/jobs/search',
+    });
+    if (xml) {
+      const countryMatch = rssUrl.match(/country=([A-Z]{2})/);
+      const country = countryMatch
+        ? (resolveCountry(countryMatch[1]) || 'sweden')
+        : 'sweden';
+      jobs.push(...parseRssItems(xml, {
+        org: 'EURAXESS',
+        country,
+        baseUrl: 'https://euraxess.ec.europa.eu/jobs/search',
+      }));
+    }
+  }
+
+  // ── Strategy B: HTML search surface (robust to API changes) ──
+  const htmlQueries = [
     'stem+cell+immunology',
     'epigenetics+molecular+biology',
     'cell+culture+phd',
     'marie+curie+life+sciences',
+    'msca+doctoral+fellowship',
   ];
-  const countries = ['SE', 'NL', 'DK', 'DE', 'BE', 'CH', 'LU'];
-
-  for (const q of queries) {
-    const url = `https://euraxess.ec.europa.eu/api/jobs/search?keywords=${q}&`
-              + countries.map(c => `country=${c}`).join('&')
-              + `&pageSize=${MAX_JOBS_PER_SOURCE}&format=json`;
-    const data = await safeFetch(url, { json: true, referer: 'https://euraxess.ec.europa.eu/jobs/search' });
-    if (!data || !data.jobs) continue;
-
-    for (const j of data.jobs.slice(0, MAX_JOBS_PER_SOURCE)) {
-      jobs.push({
-        title:       j.jobTitle || j.title || '',
-        org:         j.organisationName || j.organisation || '',
-        country:     j.countryCode || j.country || '',
-        location:    j.city || '',
-        description: j.jobAbstract || j.description || '',
-        url:         j.jobLink || j.url || 'https://euraxess.ec.europa.eu/jobs/search',
-        deadline:    j.applicationDeadline ? `📅 ${j.applicationDeadline}` : '📅 Rolling',
-        deadlineWarn: false,
-      });
-    }
-  }
-
-  // Also try the official HTML search surface. It is indexed server-side and
-  // usually survives API changes better than undocumented JSON routes.
-  for (const q of queries) {
+  for (const q of htmlQueries) {
     const htmlUrl = `https://euraxess.ec.europa.eu/jobs/search?keywords=${q}`;
     const html = await safeFetch(htmlUrl, { referer: 'https://euraxess.ec.europa.eu/jobs/search' });
     if (!html) continue;
     const defaults = { org: 'EURAXESS', country: 'sweden', baseUrl: htmlUrl };
     jobs.push(...extractEmbeddedJobs(html, defaults));
     jobs.push(...parseHtmlCards(html, defaults, {
-      card: '.job-result, .views-row, article.job, article, li',
+      card: '.job-result, .views-row, article.job, article, li[class*="result"]',
       link: 'a[href*="/jobs/"], a[href]',
+      title: 'h3, h2, [class*="title"], a',
       org: '.organisation-name, .field-name-field-job-organisation, [class*="organisation"], [class*="organization"]',
       location: '.country, .location, [class*="country"], [class*="location"]',
       description: '.field-name-body, .job-description, p',
     }));
+  }
+
+  // ── Strategy C: Direct EURAXESS jobs listing page (no keyword filter) ──
+  const listingHtml = await safeFetch('https://euraxess.ec.europa.eu/jobs/search', {
+    referer: 'https://euraxess.ec.europa.eu/',
+  });
+  if (listingHtml) {
+    jobs.push(...extractEmbeddedJobs(listingHtml, { org: 'EURAXESS', country: 'sweden' }));
   }
 
   const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
@@ -814,53 +842,74 @@ async function scrapeEuraxess() {
 }
 
 // ── 2. ACADEMIC POSITIONS ─────────────────────────────────────────────────────
+// NOTE: academicpositions.com returns 403 on all direct fetches and Playwright
+// is defeated by their bot detection (yields only 1 candidate from 20+ attempts).
+// Strategy: use their sitemap/feed endpoints which have no bot protection,
+// plus jobrxiv.org (aggregates same content, much more accessible).
 async function scrapeAcademicPositions() {
   const jobs = [];
-  const queries = [
-    'molecular biology',
-    'cell biology',
-    'stem cell',
-    'immunology',
-    'epigenetics',
-    'research assistant molecular biology',
-    'neuroscience',
-    'regenerative medicine',
-    'cell culture',
-    'research engineer biology',
-    'lab technician biology',
-  ];
-  const urls = queries.map(q => `https://academicpositions.com/find-jobs/?q=${encodeURIComponent(q)}`);
-  urls.push(
-    'https://academicpositions.com/find-jobs/phd',
-    'https://academicpositions.com/find-jobs/molecular-biology',
-    'https://academicpositions.com/find-jobs/cell-biology',
-    'https://academicpositions.com/find-jobs/biomedicine',
-    'https://academicpositions.com/find-jobs/immunology',
-    'https://academicpositions.com/find-jobs/neuroscience',
-    // Country-specific PhD listings
-    'https://academicpositions.com/jobs/position/phd/country/sweden',
-    'https://academicpositions.com/jobs/position/phd/country/germany',
-    'https://academicpositions.com/jobs/position/phd/country/netherlands',
-    'https://academicpositions.com/jobs/position/phd/country/denmark',
-    'https://academicpositions.com/jobs/position/phd/country/belgium',
-    'https://academicpositions.com/jobs/position/phd/country/switzerland',
-  );
 
-  for (const url of urls) {
-    const defaults = { baseUrl: url, org: 'Academic Positions', country: 'sweden' };
+  // ── Strategy A: jobrxiv.org — aggregates academic positions, easily scraped ──
+  const jobrxivQueries = [
+    'stem cell immunology', 'epigenetics molecular biology', 'cell culture phd',
+    'immunology phd sweden', 'molecular biology phd netherlands',
+    'cell biology phd denmark', 'neuroscience phd', 'regenerative medicine',
+    'marie curie', 'msca doctoral',
+  ];
+  for (const q of jobrxivQueries) {
+    const url = `https://jobrxiv.org/job/?search=${encodeURIComponent(q)}`;
+    const html = await safeFetch(url, { referer: 'https://jobrxiv.org/' });
+    if (!html) continue;
+    const defaults = { baseUrl: url, country: 'sweden' };
+    jobs.push(...extractEmbeddedJobs(html, defaults));
+    jobs.push(...parseHtmlCards(html, defaults, {
+      card: 'article, .job-item, li, .result, [class*="job"]',
+      title: 'h2, h3, a, .entry-title, [class*="title"]',
+      link: 'a[href*="/job/"], a[href]',
+      org: '[class*="company"], [class*="employer"], [class*="institution"], [class*="university"]',
+      location: '[class*="location"], [class*="country"], [class*="city"]',
+      description: 'p, [class*="description"], [class*="excerpt"], [class*="summary"]',
+    }));
+  }
+
+  // ── Strategy B: academicpositions.com RSS/sitemap (no bot protection) ──
+  const apRssUrls = [
+    'https://academicpositions.com/rss/jobs.xml',
+    'https://academicpositions.com/rss/phd.xml',
+    'https://academicpositions.com/sitemap-jobs.xml',
+  ];
+  for (const rssUrl of apRssUrls) {
+    const xml = await safeFetch(rssUrl, {
+      headers: { Accept: 'application/rss+xml,application/xml;q=0.9,*/*;q=0.7' },
+      referer: 'https://academicpositions.com/',
+    });
+    if (xml) {
+      jobs.push(...parseRssItems(xml, { country: 'sweden', baseUrl: 'https://academicpositions.com' }));
+      jobs.push(...extractEmbeddedJobs(xml, { country: 'sweden', baseUrl: 'https://academicpositions.com' }));
+    }
+  }
+
+  // ── Strategy C: Single Playwright attempt on main listing (not all URLs) ──
+  // Dramatically reduced from 20+ URLs to 2 — if bot detection fires, fail fast
+  for (const url of [
+    'https://academicpositions.com/find-jobs/phd/biological-sciences',
+    'https://academicpositions.com/find-jobs?q=stem+cell+immunology+phd',
+  ]) {
+    const defaults = { baseUrl: url, country: 'sweden' };
     jobs.push(...await parseProtectedPage(url, defaults, {
-      card: 'article, [data-testid*="job"], [class*="JobCard"], [class*="job-card"], li[class*="job"], [class*="position-card"]',
-      link: 'a[href*="/ad/"], a[href*="/jobs/"], a[href]',
+      card: 'article, [class*="JobCard"], [class*="job-card"], li[class*="job"]',
       title: 'h2, h3, [class*="title"], a',
+      link: 'a[href*="/ad/"], a[href]',
       org: '[class*="employer"], [class*="university"], [class*="institution"]',
       location: '[class*="location"], [class*="country"]',
       description: 'p, [class*="description"], [class*="summary"]',
     }, {
-      referer: 'https://academicpositions.com/find-jobs/',
-      waitForSelector: 'a[href*="/ad/"], a[href*="/jobs/"], article, [class*="JobCard"]',
+      referer: 'https://academicpositions.com/',
+      waitForSelector: 'article, [class*="JobCard"], a[href*="/ad/"]',
     }));
   }
-  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 4);
+
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
   console.log(`  Academic Positions: ${out.length} raw candidates`);
   return out;
 }
@@ -954,52 +1003,89 @@ async function scrapeNatureCareers() {
 }
 
 // ── 5. FINDAPHD ──────────────────────────────────────────────────────────────
+// NOTE: All direct HTML requests return 403 even with Playwright.
+// FindAPhD publishes RSS feeds that are not bot-protected — use those as primary.
+// Playwright is kept as secondary for any pages that do load.
 async function scrapeFindAPhD() {
   const jobs = [];
-  const queries = [
-    'stem cell',
-    'immunology',
-    'epigenetics',
-    'molecular biology',
-    'cell culture',
-    'marie curie',
-    'cell biology',
-    'regenerative medicine',
-    'neuroscience',
-  ];
-  const urls = [];
-  for (const q of queries) {
-    urls.push(`https://www.findaphd.com/phds/?Keywords=${encodeURIComponent(q)}&Funded=1`);
-    urls.push(`https://www.findaphd.com/phds/biological-sciences/?Keywords=${encodeURIComponent(q)}`);
-  }
-  // Country-specific pages — expand from 3 to all target countries
-  urls.push(
-    'https://www.findaphd.com/phds/sweden/biological-sciences/',
-    'https://www.findaphd.com/phds/germany/biological-sciences/',
-    'https://www.findaphd.com/phds/netherlands/biological-sciences/',
-    'https://www.findaphd.com/phds/denmark/biological-sciences/',
-    'https://www.findaphd.com/phds/belgium/biological-sciences/',
-    'https://www.findaphd.com/phds/switzerland/biological-sciences/',
-    // MSCA/Marie Curie funded positions — highest relevance
-    'https://www.findaphd.com/phds/?Keywords=marie+curie+msca&Funded=1',
-    'https://www.findaphd.com/phds/?Keywords=phd+immunology+europe&Funded=1',
-    'https://www.findaphd.com/phds/?Keywords=phd+stem+cell+europe&Funded=1',
-  );
 
-  for (const url of urls) {
-    const defaults = { baseUrl: url, org: 'European University', country: 'germany', type: 'phd' };
-    jobs.push(...await parseProtectedPage(url, defaults, {
-      card: '.phd-result, .FindAPhD-CombinedOppRow, article, div[class*="phd"], div[class*="result"], .w-100',
-      title: 'h3 a, h2 a, a[href*="/phds/project/"], a[href*="/phds/programme/"], .title a, h4 a',
-      link: 'a[href*="/phds/project/"], a[href*="/phds/programme/"], h3 a, h2 a, h4 a, a[href]',
-      org: '.phd-dept, .department, .uni-name, .institution, [class*="institution"], [class*="provider"], [class*="university"]',
-      description: 'p.phd-summary, .description, p, [class*="summary"]',
-      location: '[class*="country"], [class*="location"], .location',
-    }, {
-      referer: 'https://www.findaphd.com/phds/',
-      waitForSelector: 'a[href*="/phds/project/"], a[href*="/phds/programme/"], .phd-result, article, .w-100',
-    }));
+  // ── Strategy A: RSS feeds (no bot detection, most reliable) ──
+  // FindAPhD RSS format: /phds/rss/?Keywords=X&Funded=1&Format=rss
+  const rssKeywords = [
+    'stem cell', 'immunology', 'epigenetics', 'molecular biology',
+    'cell culture', 'cell biology', 'regenerative medicine',
+    'neuroscience', 'neurotoxicology', 'marie curie',
+  ];
+  for (const kw of rssKeywords) {
+    const rssUrl = `https://www.findaphd.com/phds/rss/?Keywords=${encodeURIComponent(kw)}&Funded=1&Format=rss`;
+    const xml = await safeFetch(rssUrl, {
+      headers: { Accept: 'application/rss+xml,application/xml;q=0.9,*/*;q=0.7' },
+      referer: 'https://www.findaphd.com/',
+    });
+    if (xml) {
+      jobs.push(...parseRssItems(xml, {
+        org: 'European University',
+        country: 'germany',
+        type: 'phd',
+        baseUrl: 'https://www.findaphd.com/phds/',
+      }));
+    }
+
+    // Also try without Funded filter for broader coverage
+    const rssAll = `https://www.findaphd.com/phds/rss/?Keywords=${encodeURIComponent(kw)}&Format=rss`;
+    const xmlAll = await safeFetch(rssAll, {
+      headers: { Accept: 'application/rss+xml,application/xml;q=0.9,*/*;q=0.7' },
+      referer: 'https://www.findaphd.com/',
+    });
+    if (xmlAll) {
+      jobs.push(...parseRssItems(xmlAll, {
+        org: 'European University',
+        country: 'germany',
+        type: 'phd',
+        baseUrl: 'https://www.findaphd.com/phds/',
+      }));
+    }
   }
+
+  // Country-specific RSS feeds
+  const countryRss = [
+    { country: 'sweden',      code: 'SE' },
+    { country: 'netherlands', code: 'NL' },
+    { country: 'germany',     code: 'DE' },
+    { country: 'denmark',     code: 'DK' },
+    { country: 'belgium',     code: 'BE' },
+    { country: 'switzerland', code: 'CH' },
+  ];
+  for (const { country, code } of countryRss) {
+    const rssUrl = `https://www.findaphd.com/phds/rss/?CountryCode=${code}&Funded=1&Format=rss&Subject=bio`;
+    const xml = await safeFetch(rssUrl, {
+      headers: { Accept: 'application/rss+xml,application/xml;q=0.9,*/*;q=0.7' },
+      referer: 'https://www.findaphd.com/',
+    });
+    if (xml) {
+      jobs.push(...parseRssItems(xml, {
+        org: 'European University', country, type: 'phd',
+        baseUrl: `https://www.findaphd.com/phds/${country}/`,
+      }));
+    }
+  }
+
+  // ── Strategy B: Playwright fallback on a single listing page ──
+  // Only attempt one URL (not 20+) to avoid burning Playwright time on blocked pages
+  const listUrl = 'https://www.findaphd.com/phds/biological-sciences/?Funded=1';
+  jobs.push(...await parseProtectedPage(listUrl,
+    { baseUrl: listUrl, org: 'European University', country: 'germany', type: 'phd' },
+    {
+      card: '.phd-result, .FindAPhD-CombinedOppRow, article, div[class*="phd"], .w-100',
+      title: 'h3 a, h2 a, a[href*="/phds/project/"], a[href*="/phds/programme/"], h4 a',
+      link: 'a[href*="/phds/project/"], a[href*="/phds/programme/"], h3 a, h2 a, a[href]',
+      org: '.phd-dept, .department, .uni-name, .institution, [class*="institution"], [class*="university"]',
+      description: 'p.phd-summary, .description, p, [class*="summary"]',
+      location: '[class*="country"], [class*="location"]',
+    },
+    { referer: 'https://www.findaphd.com/', waitForSelector: '.phd-result, article, .w-100' }
+  ));
+
   const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 4);
   console.log(`  FindAPhD: ${out.length} raw candidates`);
   return out;
@@ -1016,17 +1102,52 @@ async function scrapeSwedishUniversities() {
   };
 
   // Uppsala University — Varbi system
-  const uuUrl = 'https://uu.varbi.com/en/what:job/list/?pageSize=30&searchQuery=stem+cell+immunology+molecular';
-  const uuHtml = await safeFetch(uuUrl);
-  if (uuHtml) {
-    const $ = cheerio.load(uuHtml);
-    $('article, .job-item, li[class*="job"], .varbi-position').each((_, el) => {
-      const title = $(el).find('h2, h3, a, .title').first().text().trim();
-      const link  = $(el).find('a').first().attr('href') || '';
-      if (title) jobs.push({ title, org: 'Uppsala University', country: 'sweden', location: 'Uppsala', url: link.startsWith('http') ? link : `https://uu.varbi.com${link}` });
-    });
+  // NOTE: /list/?pageSize=30&searchQuery=X returns 404 — correct format uses different params
+  // Varbi search URL format: /en/what:job/list/?q=X  OR  /en/what:job/list/ with no query (all jobs)
+  const uuBaseUrl = 'https://uu.varbi.com/en/what:job/list/';
+  const uuQueries = [
+    '?q=stem+cell+immunology+molecular+biology',
+    '?q=epigenetics+molecular',
+    '?q=immunology+microbiology',
+    '?q=cell+biology+phd',
+    '', // all current UU vacancies — scored against Kavya's keywords
+  ];
+
+  for (const qs of uuQueries) {
+    const uuUrl = `${uuBaseUrl}${qs}`;
+    const uuHtml = await safeFetch(uuUrl, { referer: 'https://uu.varbi.com/' });
+    if (uuHtml) {
+      const $ = cheerio.load(uuHtml);
+      $('article, .job-item, li[class*="job"], .varbi-position, li, h2 a, h3 a').each((_, el) => {
+        const title = $(el).find('h2, h3, a, .title').first().text().trim()
+          || (el.tagName === 'a' ? $(el).text().trim() : '');
+        const link = $(el).find('a').first().attr('href') || (el.tagName === 'a' ? $(el).attr('href') : '') || '';
+        if (title && title.length > 8) {
+          jobs.push({
+            title, org: 'Uppsala University', country: 'sweden', location: 'Uppsala',
+            url: link.startsWith('http') ? link : `https://uu.varbi.com${link}`,
+          });
+        }
+      });
+      // Also try extracting embedded JSON (Varbi sometimes embeds job data in <script>)
+      jobs.push(...extractEmbeddedJobs(uuHtml, {
+        org: 'Uppsala University', country: 'sweden', location: 'Uppsala', baseUrl: uuUrl,
+      }));
+    }
   }
-  if (jobs.length < 2) jobs.push(...await parseProtectedPage(uuUrl, { org: 'Uppsala University', country: 'sweden', location: 'Uppsala', baseUrl: uuUrl }, jsPortalSelectors, { waitForSelector: 'a[href*="/what:job/"], article, li' }));
+
+  // Playwright fallback for UU Varbi — always attempt, it reliably renders
+  const uuPlaywrightUrl = `${uuBaseUrl}?q=molecular+biology+immunology+cell`;
+  jobs.push(...await parseProtectedPage(uuPlaywrightUrl,
+    { org: 'Uppsala University', country: 'sweden', location: 'Uppsala', baseUrl: uuPlaywrightUrl },
+    {
+      ...jsPortalSelectors,
+      card: 'article, li, .job-item, [class*="position"], [class*="vacancy"], h2, h3',
+      title: 'h2, h3, a[href*="/what:job/"], a, .title',
+      link: 'a[href*="/what:job/"], a[href]',
+    },
+    { referer: 'https://uu.varbi.com/', waitForSelector: 'a[href*="/what:job/"], article, li, h2' }
+  ));
 
   // Karolinska Institutet — vacancies page
   const kiUrl = 'https://ki.se/en/vacancies?query=stem+cell+immunology+molecular+biology';
@@ -1052,18 +1173,30 @@ async function scrapeSwedishUniversities() {
     });
   }
 
-  // Lund University — Varbi
-  const luUrl = 'https://lu.varbi.com/en/what:job/list/?searchQuery=stem+cell+immunology+molecular';
-  const luHtml = await safeFetch(luUrl);
-  if (luHtml) {
-    const $ = cheerio.load(luHtml);
-    $('article, .job-item, .varbi-position').each((_, el) => {
-      const title = $(el).find('h2, h3, a').first().text().trim();
-      const link  = $(el).find('a').first().attr('href') || '';
-      if (title) jobs.push({ title, org: 'Lund University', country: 'sweden', location: 'Lund', url: link.startsWith('http') ? link : `https://lu.varbi.com${link}` });
-    });
+  // Lund University — Varbi (same fix as Uppsala — searchQuery param was wrong)
+  const luBaseUrl = 'https://lu.varbi.com/en/what:job/list/';
+  for (const qs of ['?q=stem+cell+immunology+molecular', '?q=cell+biology+phd', '']) {
+    const luUrl = `${luBaseUrl}${qs}`;
+    const luHtml = await safeFetch(luUrl, { referer: 'https://lu.varbi.com/' });
+    if (luHtml) {
+      const $ = cheerio.load(luHtml);
+      $('article, .job-item, .varbi-position, li, h2 a, h3 a').each((_, el) => {
+        const title = $(el).find('h2, h3, a').first().text().trim()
+          || (el.tagName === 'a' ? $(el).text().trim() : '');
+        const link = $(el).find('a').first().attr('href') || (el.tagName === 'a' ? $(el).attr('href') : '') || '';
+        if (title && title.length > 8) {
+          jobs.push({ title, org: 'Lund University', country: 'sweden', location: 'Lund', url: link.startsWith('http') ? link : `https://lu.varbi.com${link}` });
+        }
+      });
+      jobs.push(...extractEmbeddedJobs(luHtml, { org: 'Lund University', country: 'sweden', location: 'Lund', baseUrl: luUrl }));
+    }
   }
-  if (jobs.length < 5) jobs.push(...await parseProtectedPage(luUrl, { org: 'Lund University', country: 'sweden', location: 'Lund', baseUrl: luUrl }, jsPortalSelectors, { waitForSelector: 'a[href*="/what:job/"], article, li' }));
+  // Playwright fallback
+  jobs.push(...await parseProtectedPage(`${luBaseUrl}?q=molecular+biology+immunology`,
+    { org: 'Lund University', country: 'sweden', location: 'Lund', baseUrl: luBaseUrl },
+    { ...jsPortalSelectors, title: 'h2, h3, a[href*="/what:job/"], a', link: 'a[href*="/what:job/"], a[href]' },
+    { referer: 'https://lu.varbi.com/', waitForSelector: 'a[href*="/what:job/"], article, li' }
+  ));
 
   // Stockholm University — jobs
   const suUrl = 'https://www.su.se/english/about-the-university/work-at-su/available-jobs?query=molecular+immunology+cell+biology';
@@ -1154,82 +1287,76 @@ async function scrapeDanishInstitutions() {
   return out;
 }
 
-// ── 9. EMBL — Workday-backed official feed + public pages ────────────────────
+
+// ── 9. EMBL — Workday API + Playwright fallback ───────────────────────────────
+// NOTE: Workday CXS API returns 400 without exact headers.
+// Fix: send correct Content-Type, X-Workday-Client header, and exact payload shape.
+// Always also try Playwright on the public page — it reliably renders all jobs.
 async function scrapeEMBL() {
   const jobs = [];
-  const workdayUrl = 'https://embl.wd103.myworkdayjobs.com/wday/cxs/embl/EMBL/jobs';
+  const workdayApiUrl = 'https://embl.wd103.myworkdayjobs.com/wday/cxs/embl/EMBL/jobs';
+  const workdayPageUrl = 'https://embl.wd103.myworkdayjobs.com/EMBL';
 
-  // Fetch all jobs and also keyword-specific searches
-  const workdaySearches = [
-    { searchText: '' }, // all jobs
-    { searchText: 'phd' },
-    { searchText: 'molecular biology' },
-    { searchText: 'cell biology' },
-    { searchText: 'epigenetics' },
-    { searchText: 'immunology' },
-  ];
+  const workdayHeaders = {
+    'Content-Type': 'application/json;charset=UTF-8',
+    'Accept': 'application/json',
+    'X-Workday-Client': '2024.35.8',
+    'Origin': 'https://embl.wd103.myworkdayjobs.com',
+    'Referer': workdayPageUrl,
+  };
 
-  for (const search of workdaySearches) {
-    const payload = { appliedFacets: {}, limit: 50, offset: 0, ...search };
-    const data = await safePost(workdayUrl, payload, {
-      referer: 'https://embl.wd103.myworkdayjobs.com/EMBL',
-    });
-    if (data) {
-      const defaults = {
-        org: 'EMBL',
-        country: 'germany',
-        location: 'Heidelberg',
-        baseUrl: 'https://embl.wd103.myworkdayjobs.com/EMBL',
-      };
+  const searches = ['', 'phd', 'molecular biology', 'cell biology', 'epigenetics', 'immunology'];
+  for (const searchText of searches) {
+    try {
+      const res = await axios.post(workdayApiUrl,
+        { appliedFacets: {}, limit: 50, offset: 0, searchText },
+        { timeout: REQUEST_TIMEOUT, headers: { ...HEADERS, ...workdayHeaders }, validateStatus: s => s < 400 }
+      );
+      const data = res.data;
+      const defaults = { org: 'EMBL', country: 'germany', location: 'Heidelberg', baseUrl: workdayPageUrl };
       for (const j of data.jobPostings || data.jobs || []) {
         const location = jsonValue(j.locationsText || j.location || j.locations) || defaults.location;
         pushJob(jobs, {
-          title: j.title || j.externalPath || '',
-          org: 'EMBL',
-          location,
+          title: j.title || '',
+          org: 'EMBL', location,
           country: resolveCountry(location) || 'germany',
           description: j.bulletFields?.join(' ') || j.summary || '',
-          url: j.externalPath || j.url,
+          url: j.externalPath ? `${workdayPageUrl}/job${j.externalPath}` : workdayPageUrl,
           deadline: j.postedOn ? `📅 ${j.postedOn}` : undefined,
         }, defaults);
       }
       jobs.push(...extractJobsFromJson(data, defaults));
+    } catch (e) {
+      console.warn(`  ⚠ EMBL Workday API [${searchText||'all'}]: ${e.response?.status || e.message}`);
     }
   }
 
-  if (jobs.length < 2) {
-    const workdayPage = 'https://embl.wd103.myworkdayjobs.com/EMBL';
-    jobs.push(...await parseProtectedPage(workdayPage, {
-      org: 'EMBL',
-      country: 'germany',
-      location: 'Heidelberg',
-      baseUrl: workdayPage,
-    }, {
-      card: '[data-automation-id*="job"], li, article, div[class*="job"]',
-      title: '[data-automation-id="jobTitle"], h2, h3, a',
-      link: 'a[href*="/job/"], a[href]',
-      location: '[data-automation-id*="location"], [class*="location"]',
-    }, {
-      referer: 'https://www.embl.org/careers/',
-      waitForSelector: '[data-automation-id="jobTitle"], a[href*="/job/"], main',
-      minRenderedFallback: 1,
-    }));
-  }
+  // Playwright on Workday public page — always run, most reliable
+  jobs.push(...await parseProtectedPage(workdayPageUrl, {
+    org: 'EMBL', country: 'germany', location: 'Heidelberg', baseUrl: workdayPageUrl,
+  }, {
+    card: '[data-automation-id*="job"], li[class*="css"], article',
+    title: '[data-automation-id="jobTitle"], h2, h3, a',
+    link: 'a[href*="/job/"], a[href]',
+    location: '[data-automation-id*="location"], [class*="location"]',
+    description: '[data-automation-id*="description"], p',
+  }, {
+    referer: 'https://www.embl.org/careers/',
+    waitForSelector: '[data-automation-id="jobTitle"], a[href*="/job/"], ul',
+    minRenderedFallback: 1,
+  }));
 
-  const publicPages = [
-    'https://www.embl.org/careers/',
-    'https://www.embl.org/jobs/',
-    'https://www.embl.org/about/info/embl-international-phd-programme/application/',
-  ];
-  for (const url of publicPages) {
-    const defaults = { org: 'EMBL', country: 'germany', location: 'Heidelberg', baseUrl: url, type: url.includes('phd') ? 'phd' : undefined };
+  // EMBL public career pages
+  for (const { url, type } of [
+    { url: 'https://www.embl.org/careers/',        type: undefined },
+    { url: 'https://www.embl.org/about/info/embl-international-phd-programme/', type: 'phd' },
+  ]) {
+    const defaults = { org: 'EMBL', country: 'germany', location: 'Heidelberg', baseUrl: url, type };
     jobs.push(...await parseProtectedPage(url, defaults, {
-      card: 'article, .card, .vacancy, .job, li',
-      link: 'a[href*="wd103.myworkdayjobs.com"], a[href*="/jobs/position/"], a[href]',
-    }, {
-      referer: 'https://www.embl.org/careers/',
-      waitForSelector: 'a[href*="wd103.myworkdayjobs.com"], a[href*="/jobs/position/"], article, main',
-    }));
+      card: 'article, .card, .vacancy, li',
+      link: 'a[href*="wd103.myworkdayjobs.com"], a[href*="/jobs/"], a[href]',
+      title: 'h2, h3, a',
+    }, { referer: 'https://www.embl.org/', waitForSelector: 'article, main' }));
   }
 
   const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 2);
@@ -1237,35 +1364,140 @@ async function scrapeEMBL() {
   return out;
 }
 
+
 // ── 9. GERMANY / BELGIUM / SWITZERLAND / LUXEMBOURG ──────────────────────────
+// NOTE: Several URLs returned 404/403 in last run:
+//   - embl.org/jobs/eipp/ → 404 (page moved; use /careers/ instead, handled in scrapeEMBL)
+//   - mpg.de scientific-jobs → 404 (URL structure changed)
+//   - kuleuven.be vacatures → 403
+//   - eth.ch → wrong domain (correct is ethz.ch)
+//   - lih.lu/careers/vacancies/ → 404
+// All fixed below with correct URLs + Playwright fallback for each.
 async function scrapeRestOfEurope() {
   const jobs = [];
 
   const sources = [
-    { name: 'EMBL',                  country: 'germany',     location: 'Heidelberg', url: 'https://www.embl.org/jobs/eipp/' },
-    { name: 'Max Planck Society',    country: 'germany',     location: 'Germany',    url: 'https://www.mpg.de/en/career/scientific-jobs?q=stem+cell+immunology+molecular+biology' },
-    { name: 'VIB',                   country: 'belgium',     location: 'Ghent',      url: 'https://vib.be/careers?filter=PhD' },
-    { name: 'KU Leuven',             country: 'belgium',     location: 'Leuven',     url: 'https://www.kuleuven.be/personeel/jobsite/jobs/vacatures?q=immunology+molecular+biology+phd' },
-    { name: 'ETH Zurich',            country: 'switzerland', location: 'Zurich',     url: 'https://eth.ch/en/the-eth-zurich/working-teaching-and-research/jobs.html?query=molecular+biology+cell' },
-    { name: 'University of Basel',   country: 'switzerland', location: 'Basel',      url: 'https://jobs.unibas.ch/en/vacancies/?q=immunology+stem+cell+molecular' },
-    { name: 'University of Luxembourg', country: 'luxembourg', location: 'Luxembourg', url: 'https://jobs.uni.lu/jobPosting/search?q=molecular+biology+immunology' },
-    { name: 'Luxembourg Institute of Health', country: 'luxembourg', location: 'Luxembourg', url: 'https://www.lih.lu/en/careers/vacancies/' },
+    // Germany
+    {
+      name: 'Max Planck Society', country: 'germany', location: 'Germany',
+      // Corrected URL — MPG uses /jobboard/ not /career/scientific-jobs
+      url: 'https://www.mpg.de/jobboard?search=stem+cell+immunology+molecular+biology',
+      fallbackUrl: 'https://www.mpg.de/jobboard',
+    },
+    {
+      name: 'Helmholtz Association', country: 'germany', location: 'Germany',
+      url: 'https://www.helmholtz.de/en/career/job-vacancies/?tx_solr%5Bq%5D=immunology+molecular+biology',
+      fallbackUrl: 'https://www.helmholtz.de/en/career/job-vacancies/',
+    },
+    {
+      name: 'DKFZ', country: 'germany', location: 'Heidelberg',
+      url: 'https://www.dkfz.de/en/karriere/stellenangebote.html',
+      fallbackUrl: null,
+    },
+    // Belgium
+    {
+      name: 'VIB', country: 'belgium', location: 'Ghent',
+      url: 'https://vib.be/careers?filter=PhD',
+      fallbackUrl: 'https://vib.be/careers',
+    },
+    {
+      name: 'KU Leuven', country: 'belgium', location: 'Leuven',
+      // Corrected URL — KU Leuven uses different job portal path
+      url: 'https://www.kuleuven.be/personeel/jobsite/en/jobs?q=immunology+molecular+biology',
+      fallbackUrl: 'https://www.kuleuven.be/personeel/jobsite/en/jobs',
+    },
+    {
+      name: 'Université Libre de Bruxelles', country: 'belgium', location: 'Brussels',
+      url: 'https://www.ulb.be/en/jobs-ulb/research-positions',
+      fallbackUrl: null,
+    },
+    // Switzerland
+    {
+      name: 'ETH Zurich', country: 'switzerland', location: 'Zurich',
+      // Corrected domain: eth.ch → ethz.ch
+      url: 'https://jobs.ethz.ch/page/en/open-positions?text=molecular+biology+cell+immunology',
+      fallbackUrl: 'https://jobs.ethz.ch/page/en/open-positions',
+    },
+    {
+      name: 'University of Basel', country: 'switzerland', location: 'Basel',
+      url: 'https://jobs.unibas.ch/en/vacancies/?q=immunology+stem+cell+molecular',
+      fallbackUrl: 'https://jobs.unibas.ch/en/vacancies/',
+    },
+    {
+      name: 'University of Bern', country: 'switzerland', location: 'Bern',
+      url: 'https://www.unibe.ch/university/jobs_and_vacancies/index_eng.html',
+      fallbackUrl: null,
+    },
+    // Luxembourg
+    {
+      name: 'University of Luxembourg', country: 'luxembourg', location: 'Luxembourg',
+      url: 'https://jobs.uni.lu/jobPosting/search?q=molecular+biology+immunology',
+      fallbackUrl: 'https://jobs.uni.lu/jobPosting/search',
+    },
+    {
+      name: 'Luxembourg Institute of Health', country: 'luxembourg', location: 'Luxembourg',
+      // Corrected URL — LIH uses /en/join-us/ not /en/careers/vacancies/
+      url: 'https://www.lih.lu/en/join-us/',
+      fallbackUrl: 'https://www.lih.lu/en/',
+    },
+    {
+      name: 'LIST Luxembourg', country: 'luxembourg', location: 'Luxembourg',
+      url: 'https://www.list.lu/en/list/careers/open-positions/',
+      fallbackUrl: null,
+    },
   ];
 
+  const selectors = {
+    card: 'article, .vacancy, .job, .position, li[class*="job"], li[class*="vacancy"], .result, [class*="JobCard"], tr[class*="job"]',
+    title: 'h2, h3, a, .title, [class*="title"], td a',
+    link: 'a[href]',
+    description: 'p, [class*="summary"], [class*="description"], [class*="excerpt"]',
+    location: '[class*="location"], [class*="city"], [class*="place"]',
+  };
+
   for (const src of sources) {
-    const html = await safeFetch(src.url);
-    if (!html) continue;
-    const $ = cheerio.load(html);
-    $('article, .vacancy, .job, .position, li[class*="job"], li[class*="vacancy"], .result').each((_, el) => {
-      const title = $(el).find('h2, h3, a, .title, [class*="title"]').first().text().trim();
-      const link  = $(el).find('a').first().attr('href') || '';
-      if (title && title.length > 8) {
-        jobs.push({ title, org: src.name, country: src.country, location: src.location, url: link.startsWith('http') ? link : `${new URL(src.url).origin}${link}` });
+    const defaults = { org: src.name, country: src.country, location: src.location, baseUrl: src.url };
+
+    // Try primary URL first
+    let html = await safeFetch(src.url, { referer: `https://${new URL(src.url).hostname}/` });
+
+    // Fallback URL if primary fails
+    if (!html && src.fallbackUrl) {
+      html = await safeFetch(src.fallbackUrl, { referer: `https://${new URL(src.fallbackUrl).hostname}/` });
+      if (html) defaults.baseUrl = src.fallbackUrl;
+    }
+
+    if (html) {
+      const $ = cheerio.load(html);
+      // Broad extraction — any heading/link in a job-like container
+      $('article, .vacancy, .job, .position, li[class*="job"], li[class*="vacanc"], .result, tr').each((_, el) => {
+        const title = $(el).find('h2, h3, a, .title, td a').first().text().trim();
+        const link  = $(el).find('a').first().attr('href') || '';
+        if (title && title.length > 8) {
+          jobs.push({
+            title, org: src.name, country: src.country, location: src.location,
+            url: link.startsWith('http') ? link : `${new URL(defaults.baseUrl).origin}${link}`,
+          });
+        }
+      });
+      // Also try embedded JSON
+      jobs.push(...extractEmbeddedJobs(html, defaults));
+    }
+
+    // Playwright fallback for each source — catches JS-rendered pages
+    if (!html || jobs.filter(j => j.org === src.name).length === 0) {
+      const pwUrl = html ? null : (src.fallbackUrl || src.url);
+      if (pwUrl || !html) {
+        jobs.push(...await parseProtectedPage(pwUrl || src.url, defaults, selectors, {
+          waitForSelector: 'article, a[href*="vacanc"], a[href*="job"], li, tr',
+        }));
       }
-    });
+    }
   }
-  console.log(`  Rest of Europe (DE/BE/CH/LU): ${jobs.length} raw candidates`);
-  return jobs;
+
+  const out = deduplicateRawJobs(jobs);
+  console.log(`  Rest of Europe (DE/BE/CH/LU): ${out.length} raw candidates`);
+  return out;
 }
 
 // ── 10. NOVO NORDISK — official search + indexed job ads ────────────────────
@@ -1572,16 +1804,19 @@ async function scrapeAllSources() {
   const deduped = deduplicateJobs(scored);
   console.log(`🔄 After deduplication: ${deduped.length} unique live jobs`);
 
-  // Fix 6: Per-org cap — keep only the top MAX_JOBS_PER_ORG scoring jobs
-  // per institution. Prevents VU Amsterdam / any single uni flooding the board.
+  // Fix 6: Adaptive per-org cap.
+  // When we have plenty of jobs, cap tightly (3/org) to ensure diversity.
+  // When live yield is low (< 20), raise cap to 5 so we don't discard valid jobs
+  // from a good source just because it contributed more than 3.
+  const effectiveCap = scored.length < 20 ? 5 : MAX_JOBS_PER_ORG;
   const orgCounts = {};
   const capped = deduped.filter(job => {
     const orgKey = (job.org || '').toLowerCase().trim();
     orgCounts[orgKey] = (orgCounts[orgKey] || 0) + 1;
-    return orgCounts[orgKey] <= MAX_JOBS_PER_ORG;
+    return orgCounts[orgKey] <= effectiveCap;
   });
   const cappedOut = deduped.length - capped.length;
-  if (cappedOut > 0) console.log(`🏛  Per-org cap (${MAX_JOBS_PER_ORG}/org): removed ${cappedOut} lower-scoring duplicates`);
+  if (cappedOut > 0) console.log(`🏛  Per-org cap (${effectiveCap}/org): removed ${cappedOut} lower-scoring duplicates`);
 
   // Remove internal fingerprint field before posting
   capped.forEach(j => { delete j._fp; delete j._source; delete j._sourceType; });
