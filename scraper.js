@@ -20,8 +20,42 @@ const path = require('path');
 
 const REQUEST_TIMEOUT = 12000; // ms per fetch
 const MAX_JOBS_PER_SOURCE = 25;
-const MIN_SCORE_THRESHOLD = 48; // below this → skip (lowered to allow more genuine matches through)
-const TARGET_LIVE_JOBS    = 15; // if we get at least this many live, skip fallback
+const MAX_JOBS_PER_ORG    = 3;   // Fix 6: cap per institution after scoring
+const MIN_SCORE_THRESHOLD = 48;  // combined title+description threshold
+const MIN_TITLE_SCORE     = 20;  // Fix 2: title must score at least this alone — "PhD position at VU Amsterdam" scores ~19, correctly below this
+const MIN_DESC_LENGTH     = 60;  // Fix 4: descriptions shorter than this get penalised
+const TARGET_LIVE_JOBS    = 15;
+
+// Fix 3: Disciplines that are irrelevant by TITLE alone.
+// Only checked against the title string — never the description —
+// so a bio job that mentions maths/physics in its body is unaffected.
+const TITLE_DISCIPLINE_EXCLUDE = [
+  // Pure mathematics / formal sciences
+  'number theory', 'mathematics', 'algebraic', 'topology', 'combinatorics',
+  'graph theory', 'calculus', 'statistics phd', 'mathematical model',
+  // Physics / astronomy
+  'astrophysics', 'astronomy', 'astrobiology', 'cosmology', 'quantum',
+  'particle physics', 'nuclear physics', 'optics phd', 'photonics phd',
+  'condensed matter', 'plasma physics',
+  // Earth / environmental sciences (non-biology)
+  'geology', 'geophysics', 'hydrology', 'hydrogeology', 'seismology',
+  'oceanography', 'atmospheric science', 'climatology', 'meteorology',
+  'groundwater', 'sedimentology', 'geochemistry', 'petrology',
+  // Engineering (non-biomedical)
+  'electrical engineering', 'mechanical engineering', 'civil engineering',
+  'structural engineering', 'aerospace engineering', 'chemical engineering phd',
+  'materials science phd', 'robotics phd', 'control systems',
+  // Humanities / social sciences
+  'philosophy', 'sociology', 'anthropology', 'archaeology', 'history phd',
+  'linguistics', 'literature phd', 'political science', 'economics phd',
+  'islamic', 'theology', 'religious studies', 'cultural studies',
+  // Marine / ecology (unless biology-adjacent)
+  'coral reef', 'marine ecology', 'fisheries', 'aquaculture phd',
+  'forest ecology', 'plant ecology phd', 'entomology phd',
+  // Computer science (pure)
+  'computer science phd', '6g ', 'big data phd', 'cybersecurity phd',
+  'information systems phd', 'human-computer interaction',
+];
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -186,22 +220,74 @@ function resolveCountry(raw = '') {
 
 // ─── SCORING ENGINE ──────────────────────────────────────────────────────────
 
-function scoreJob(title = '', description = '') {
-  const text = (title + ' ' + description).toLowerCase();
+// Fix 3: Check title against off-discipline list (title only, never description)
+function titleIsOffDiscipline(title = '') {
+  const t = title.toLowerCase();
+  for (const term of TITLE_DISCIPLINE_EXCLUDE) {
+    if (t.includes(term)) return true;
+  }
+  return false;
+}
 
-  // Hard exclusion check (tight list — only truly irrelevant roles)
+// Fix 2: Score title in isolation — used as a hard gate before full scoring
+function scoreTitleAlone(title = '') {
+  const t = title.toLowerCase();
+  let s = 0;
+  // Hard exclusion on title
+  for (const excl of HARD_EXCLUDE) {
+    if (t.includes(excl)) return -1;
+  }
+  // Role type signals in title
+  if (/phd|doctoral/.test(t))                              s += 10;
+  if (/research\s+(assistant|engineer|scientist|associate|technician)/i.test(t)) s += 10;
+  if (/lab(oratory)?\s+(technician|assistant)/i.test(t))  s += 8;
+  if (/junior\s+(scientist|researcher|associate)/i.test(t)) s += 8;
+  if (/associate\s+scientist/i.test(t))                   s += 8;
+  if (/marie\s+curie|msca/i.test(t))                      s += 14;
+  // Science / biology keywords in title
+  for (const { kw, w } of STRONG_KEYWORDS) {
+    if (t.includes(kw)) s += Math.ceil(w * 0.6); // partial weight for title-only match
+  }
+  return s;
+}
+
+function scoreJob(title = '', description = '') {
+  // ── Fix 3: title discipline gate (fastest possible rejection) ──
+  if (titleIsOffDiscipline(title)) return -1;
+
+  // ── Fix 2: title-alone score gate ──
+  const titleScore = scoreTitleAlone(title);
+  if (titleScore < 0) return -1; // hard exclusion fired in title
+
+  // Fix 1: Placeholder detection — always reject if the description is the
+  // scraper's own fallback text (never real content from the listing).
+  const PLACEHOLDER_PATTERN = /live listing from|matches your profile on molecular biology/i;
+  if (description && PLACEHOLDER_PATTERN.test(description)) return -1;
+
+  const descIsReal = description
+    && description.length >= MIN_DESC_LENGTH
+    && !PLACEHOLDER_PATTERN.test(description);
+
+  // Fix 2 continued: Generic title + no real description → reject.
+  // e.g. "PhD position at VU Amsterdam" scores titleScore ~10 (no bio keywords)
+  // → correctly dropped when there's no description to save it.
+  if (titleScore < MIN_TITLE_SCORE && !descIsReal) return -1;
+
+  const text = (title + ' ' + (descIsReal ? description : '')).toLowerCase();
+
+  // Hard exclusion check on combined text
   for (const excl of HARD_EXCLUDE) {
     if (text.includes(excl)) return -1;
   }
 
-  let score = 36; // base — life sciences context assumed from source
+  let score = 36; // base
 
-  // Life sciences context bonuses (source-level signals)
+  // Life sciences context bonus
   if (/life science|biolog|biomed|biochem|biotech|pharmaceutical|health|medical|research|laborator/i.test(text)) {
     score += 6;
   }
 
-  // PhD / role boosts applied first
+  // PhD / role boosts
   if (text.includes('phd') || text.includes('doctoral')) score += 14;
   if (text.includes('fully funded') || text.includes('marie curie') || text.includes('msca')) score += 18;
   if (/research\s+(assistant|engineer|scientist|associate|technician)/i.test(text)) score += 10;
@@ -214,10 +300,14 @@ function scoreJob(title = '', description = '') {
     if (text.includes(kw)) score += w;
   }
 
-  // Multi-keyword bonus: if ≥3 strong keywords match, extra relevance bonus
+  // Multi-keyword bonus
   const matchCount = STRONG_KEYWORDS.filter(({ kw }) => text.includes(kw)).length;
   if (matchCount >= 3) score += 8;
   if (matchCount >= 5) score += 6;
+
+  // Fix 4: Thin description penalty — if description was absent or too short,
+  // we're scoring on title alone; raise the effective bar.
+  if (!descIsReal) score -= 12;
 
   // Soft exclusion penalties
   for (const { kw, penalty } of SOFT_EXCLUDE) {
@@ -241,17 +331,41 @@ function fingerprint(title = '', org = '') {
   return `${org.toLowerCase().replace(/\s+/g, ' ').trim()}||${title.toLowerCase().replace(/\s+/g, ' ').trim()}`;
 }
 
+// Fix 5: Sources that return ALL jobs from an institution (not keyword-filtered)
+// need a higher threshold — they produce the "PhD in Astrophysics at VU Amsterdam" noise.
+// Keyword-search sources (FindAPhD, EURAXESS, Nature Careers) are trusted at MIN_SCORE_THRESHOLD.
+const GENERAL_PORTAL_SOURCES = new Set([
+  'dutch', 'swedish', 'danish', 'resteurope', 'academictransfer',
+]);
+const PORTAL_SCORE_THRESHOLD = 62; // raised bar for general portals
+
 // Build a proper job object from raw fields
-function buildJob(raw, source) {
+// sourceType: 'keyword' (search-result pages) | 'portal' (general university vacancy pages)
+function buildJob(raw, source, sourceType = 'keyword') {
   const score = scoreJob(raw.title, raw.description || '');
-  if (score < MIN_SCORE_THRESHOLD) return null;
+
+  // Fix 5: Apply tighter threshold for general portal sources
+  const threshold = (sourceType === 'portal' || GENERAL_PORTAL_SOURCES.has(source))
+    ? PORTAL_SCORE_THRESHOLD
+    : MIN_SCORE_THRESHOLD;
+
+  if (score < threshold) return null;
 
   const country = resolveCountry(raw.country);
   const type    = raw.type || typeFromText(raw.title + ' ' + (raw.description || ''));
   const tier    = tierFromScore(score);
-  const why     = raw.description
+
+  // Fix 1: Only use description text that is genuinely from the listing.
+  // The PLACEHOLDER_PATTERN check is already done in scoreJob, but we also
+  // guard here so the `why` field never shows the placeholder as if it were real.
+  const PLACEHOLDER_PATTERN = /live listing from|matches your profile on molecular biology/i;
+  const descIsReal = raw.description
+    && raw.description.length >= MIN_DESC_LENGTH
+    && !PLACEHOLDER_PATTERN.test(raw.description);
+
+  const why = descIsReal
     ? raw.description.replace(/\s+/g, ' ').trim().substring(0, 160) + '…'
-    : `Live listing from ${source}. Matches your profile on molecular biology & cell culture skills.`;
+    : `Live listing from ${source}. Score: ${score} — title matched Kavya's profile keywords.`;
 
   const id = `${source}-${fingerprint(raw.title, raw.org).replace(/[^a-z0-9]/g, '-').substring(0, 48)}`;
 
@@ -1402,57 +1516,88 @@ async function scrapeAllSources() {
     scrapeIndustryCareers(),
   ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : []));
 
+  // Tag each raw job with its source name and type so the scorer can apply
+  // the right threshold. 'portal' = general university vacancy pages (noisier).
+  // 'keyword' = search-result pages that pre-filter by relevant terms (cleaner).
+  function tagSource(arr, source, sourceType = 'keyword') {
+    return arr.map(j => ({ ...j, _source: source, _sourceType: sourceType }));
+  }
+
   const allRaw = [
-    ...euraxessRaw,
-    ...academicPosRaw,
-    ...academicTransferRaw,
-    ...natureCareersRaw,
-    ...findaPhdRaw,
-    ...swedishRaw,
-    ...dutchRaw,
-    ...danishRaw,
-    ...emblRaw,
-    ...restEuropeRaw,
-    ...novoRaw,
-    ...industryRaw,
+    ...tagSource(euraxessRaw,       'euraxess',        'keyword'),
+    ...tagSource(academicPosRaw,    'academicpos',     'keyword'),
+    ...tagSource(academicTransferRaw,'academictransfer','portal'),  // general NL portal
+    ...tagSource(natureCareersRaw,  'nature',          'keyword'),
+    ...tagSource(findaPhdRaw,       'findaphd',        'keyword'),
+    ...tagSource(swedishRaw,        'swedish',         'portal'),   // general SE portals
+    ...tagSource(dutchRaw,          'dutch',           'portal'),   // general NL portals
+    ...tagSource(danishRaw,         'danish',          'portal'),   // general DK portals
+    ...tagSource(emblRaw,           'embl',            'keyword'),
+    ...tagSource(restEuropeRaw,     'resteurope',      'portal'),   // general EU portals
+    ...tagSource(novoRaw,           'novo',            'keyword'),
+    ...tagSource(industryRaw,       'industry',        'keyword'),
   ];
 
   await closeBrowser();
 
+  // Log source breakdown so we can spot which sources are contributing
+  const sourceBreakdown = {};
+  allRaw.forEach(j => {
+    sourceBreakdown[j._source] = (sourceBreakdown[j._source] || 0) + 1;
+  });
+  console.log('\n📦 Raw candidates per source:');
+  Object.entries(sourceBreakdown)
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([src, n]) => {
+      const type = GENERAL_PORTAL_SOURCES.has(src) ? '(portal, threshold ≥62)' : '(keyword, threshold ≥48)';
+      console.log(`   ${src.padEnd(18)} ${String(n).padStart(4)} ${type}`);
+    });
   console.log(`\n📊 Total raw candidates across all sources: ${allRaw.length}`);
 
-  // Score and filter
+  // Score and filter — pass sourceType so portal sources get tighter threshold
   const scored = [];
   for (const raw of allRaw) {
     if (!raw.title || raw.title.length < 6) continue;
-    const job = buildJob(raw, 'live');
+    const sourceType = raw._sourceType || 'keyword';
+    const job = buildJob(raw, raw._source || 'live', sourceType);
     if (job) scored.push(job);
   }
 
-  console.log(`✅ Passed scoring threshold (≥${MIN_SCORE_THRESHOLD}): ${scored.length} jobs`);
+  console.log(`✅ Passed scoring threshold: ${scored.length} jobs`);
 
-  // Sort by score descending
+  // Sort by score descending before capping
   scored.sort((a, b) => b.score - a.score);
 
-  // Deduplicate
+  // Deduplicate by fingerprint
   const deduped = deduplicateJobs(scored);
   console.log(`🔄 After deduplication: ${deduped.length} unique live jobs`);
 
+  // Fix 6: Per-org cap — keep only the top MAX_JOBS_PER_ORG scoring jobs
+  // per institution. Prevents VU Amsterdam / any single uni flooding the board.
+  const orgCounts = {};
+  const capped = deduped.filter(job => {
+    const orgKey = (job.org || '').toLowerCase().trim();
+    orgCounts[orgKey] = (orgCounts[orgKey] || 0) + 1;
+    return orgCounts[orgKey] <= MAX_JOBS_PER_ORG;
+  });
+  const cappedOut = deduped.length - capped.length;
+  if (cappedOut > 0) console.log(`🏛  Per-org cap (${MAX_JOBS_PER_ORG}/org): removed ${cappedOut} lower-scoring duplicates`);
+
   // Remove internal fingerprint field before posting
-  deduped.forEach(j => delete j._fp);
-  writeHistoricalJobs(deduped);
+  capped.forEach(j => { delete j._fp; delete j._source; delete j._sourceType; });
+  writeHistoricalJobs(capped);
 
   // If we found enough live jobs — return them, no fallback
-  if (deduped.length >= TARGET_LIVE_JOBS) {
-    console.log(`\n🎯 SUCCESS: ${deduped.length} live jobs found — skipping fallback\n`);
-    return { jobs: deduped, usedFallback: false };
+  if (capped.length >= TARGET_LIVE_JOBS) {
+    console.log(`\n🎯 SUCCESS: ${capped.length} live jobs found — skipping fallback\n`);
+    return { jobs: capped, usedFallback: false };
   }
 
   // Partial live results — append only fallbacks that don't duplicate a live job
-  if (deduped.length > 0) {
-    const padFallback = fallbackPool(deduped);
-    console.log(`⚠️  Only ${deduped.length} live jobs found — padding with ${padFallback.length} historical/static fallbacks`);
-    return { jobs: [...deduped, ...padFallback], usedFallback: true };
+  if (capped.length > 0) {
+    const padFallback = fallbackPool(capped);
+    console.log(`⚠️  Only ${capped.length} live jobs found — padding with ${padFallback.length} historical/static fallbacks`);
+    return { jobs: [...capped, ...padFallback], usedFallback: true };
   }
 
   // Zero live jobs — full fallback
