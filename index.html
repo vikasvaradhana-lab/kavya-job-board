@@ -212,48 +212,60 @@ body::before {
 .sort-select:hover { border-color: var(--accent); }
 .sort-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(78,204,163,0.1); }
 
-/* ─── NEW THIS WEEK BANNER ─── */
-.new-this-week {
-  background: linear-gradient(135deg, rgba(78,204,163,0.07) 0%, rgba(91,156,246,0.05) 100%);
-  border: 1px solid rgba(78,204,163,0.2);
-  border-radius: 12px;
-  padding: 20px 24px 16px;
-  margin-bottom: 32px;
-}
-.new-this-week-hd {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
-}
-.new-this-week-title {
-  font-family: 'Playfair Display', serif; font-size: 17px; color: var(--accent);
-}
-.new-this-week-count {
-  font-size: 11px; color: var(--muted); background: rgba(78,204,163,0.1);
-  padding: 2px 9px; border-radius: 8px; border: 1px solid rgba(78,204,163,0.2);
-  margin-left: auto;
-}
-.new-this-week-empty {
-  font-size: 12px; color: var(--muted); padding: 8px 0; font-style: italic;
-}
-
-/* ─── NEW / RECENT BADGE ─── */
+/* ─── JUST FOUND DAY BADGES ─── */
+/* Each badge shows how many days ago a job was found.
+   Intensity fades from bright green (day 0) → muted teal (day 7).
+   No badge shown for 8+ days. */
 .freshness-badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
-  padding: 2px 7px; border-radius: 4px; text-transform: uppercase;
-  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.4px;
+  padding: 2px 8px; border-radius: 4px; text-transform: uppercase;
+  flex-shrink: 0; white-space: nowrap;
 }
-.freshness-badge.is-new {
-  background: rgba(78,204,163,0.15); color: var(--accent);
-  border: 1px solid rgba(78,204,163,0.3);
-  animation: freshPulse 2.5s ease-in-out infinite;
+/* Day 0 — Just Found — brightest, animated pulse */
+.fresh-0 {
+  background: rgba(78,204,163,0.18); color: #4ecca3;
+  border: 1px solid rgba(78,204,163,0.45);
+  animation: freshPulse 2.2s ease-in-out infinite;
 }
-.freshness-badge.is-recent {
-  background: rgba(245,200,66,0.1); color: var(--gold);
-  border: 1px solid rgba(245,200,66,0.25);
+/* Day 1 */
+.fresh-1 {
+  background: rgba(78,204,163,0.13); color: #4ec8a0;
+  border: 1px solid rgba(78,204,163,0.35);
+}
+/* Day 2 */
+.fresh-2 {
+  background: rgba(78,204,163,0.10); color: #45b894;
+  border: 1px solid rgba(78,204,163,0.28);
+}
+/* Day 3 */
+.fresh-3 {
+  background: rgba(78,204,163,0.08); color: #3da888;
+  border: 1px solid rgba(78,204,163,0.22);
+}
+/* Day 4 */
+.fresh-4 {
+  background: rgba(78,204,163,0.06); color: #35987c;
+  border: 1px solid rgba(78,204,163,0.17);
+}
+/* Day 5 */
+.fresh-5 {
+  background: rgba(78,204,163,0.05); color: #2d8870;
+  border: 1px solid rgba(78,204,163,0.14);
+}
+/* Day 6 */
+.fresh-6 {
+  background: rgba(78,204,163,0.04); color: #257864;
+  border: 1px solid rgba(78,204,163,0.11);
+}
+/* Day 7 — most faded but still visible */
+.fresh-7 {
+  background: rgba(78,204,163,0.03); color: #1e6858;
+  border: 1px solid rgba(78,204,163,0.09);
 }
 @keyframes freshPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(78,204,163,0.15); }
-  50% { box-shadow: 0 0 0 4px rgba(78,204,163,0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(78,204,163,0.2); }
+  50%       { box-shadow: 0 0 0 5px rgba(78,204,163,0); }
 }
 
 /* ─── DATE FOUND LABEL ─── */
@@ -522,7 +534,6 @@ body::before {
   <div class="stats-inner">
     <div class="stat-item"><span class="stat-n" id="statTotal" style="color:var(--accent)">22</span><span class="stat-l">Total</span></div>
     <div class="stat-item"><span class="stat-n" id="statVisible" style="color:var(--text)">22</span><span class="stat-l">Showing</span></div>
-    <div class="stat-item"><span class="stat-n" id="statNew" style="color:var(--accent)">0</span><span class="stat-l">New This Week</span></div>
     <div class="stat-item"><span class="stat-n" id="statHigh" style="color:var(--high)">8</span><span class="stat-l">High Fit</span></div>
     <div class="stat-item"><span class="stat-n" id="statMed" style="color:var(--gold)">8</span><span class="stat-l">Medium</span></div>
     <div class="stat-item"><span class="stat-n" id="statStretch" style="color:var(--rose)">6</span><span class="stat-l">Stretch</span></div>
@@ -533,7 +544,7 @@ body::before {
 <!-- Controls -->
 <div class="controls">
   <div class="controls-inner">
-    <select class="country-select" onchange="setCountry(this.value)">
+    <select class="country-select" id="countrySelect" onchange="setCountry(this.value)">
       <option value="sweden" selected>🇸🇪 Sweden</option>
       <option value="netherlands">🇳🇱 Netherlands</option>
       <option value="denmark">🇩🇰 Denmark</option>
@@ -541,6 +552,12 @@ body::before {
       <option value="belgium">🇧🇪 Belgium</option>
       <option value="switzerland">🇨🇭 Switzerland</option>
       <option value="luxembourg">🇱🇺 Luxembourg</option>
+      <option value="norway">🇳🇴 Norway</option>
+      <option value="finland">🇫🇮 Finland</option>
+      <option value="austria">🇦🇹 Austria</option>
+      <option value="canada">🇨🇦 Canada</option>
+      <option value="singapore">🇸🇬 Singapore</option>
+      <option value="australia">🇦🇺 Australia</option>
     </select>
     <div class="ctrl-sep"></div>
     <select class="sort-select" id="sortSelect" onchange="setSort(this.value)">
@@ -577,16 +594,6 @@ body::before {
 <!-- Main Content -->
 <div class="main" id="mainContent">
 
-  <!-- 🔥 NEW THIS WEEK -->
-  <div class="new-this-week" id="newThisWeek" style="display:none">
-    <div class="new-this-week-hd">
-      <span style="font-size:18px">🔥</span>
-      <div class="new-this-week-title">New This Week</div>
-      <div class="new-this-week-count" id="newThisWeekCount">0 positions</div>
-    </div>
-    <div class="grid" id="grid-new"></div>
-  </div>
-
   <!-- HIGH -->
   <div class="tier-hd" id="hd-high">
     <div class="tdot" style="background:var(--high)"></div>
@@ -617,20 +624,30 @@ body::before {
   </div>
 
   <div class="footer-note" id="footerNote">
-    <strong>📋 How it works:</strong> Use the status dropdown on each card to track your applications. Check "Hide Applied / Rejected / Closed" to keep your board clean. Click <strong>Refresh Board</strong> to fetch the latest live listings — <em>existing strong positions are always preserved</em>; only genuinely new jobs are added and only provably closed/expired ones are removed.<br><br>
+    <strong>📋 How it works:</strong> Use the status dropdown on each card to track your applications. Check "Hide Applied / Rejected / Closed" to keep your board clean. Click <strong>Refresh Board</strong> to fetch the latest live listings — the board also <em>auto-refreshes once per day</em> on first load. Existing strong positions are always preserved; only provably closed/expired ones are removed.<br><br>
     <strong>🌍 Live sources searched:</strong>
-    EURAXESS · Nature Careers · MSCA · Academic Positions · Academic Transfer · FindAPhD ·
+    EURAXESS · Nature Careers · MSCA · jobs.ac.uk · jobrxiv.org · Academic Positions · Academic Transfer ·
     Uppsala University · Karolinska Institutet · Lund University · SciLifeLab · Stockholm University · Chalmers ·
     University of Amsterdam · Leiden University · Utrecht University · Erasmus MC · Wageningen ·
-    University of Copenhagen · DTU · Novo Nordisk · Aarhus University ·
-    Max Planck · EMBL · VIB · ETH Zurich · KU Leuven · University of Basel · University of Luxembourg ·
-    AstraZeneca · Thermo Fisher · Roche · Novartis · Bayer<br><br>
+    University of Copenhagen · DTU · Aarhus University · Novo Nordisk ·
+    Max Planck · Helmholtz · DKFZ · EMBL · VIB · KU Leuven · ETH Zurich · University of Basel ·
+    University of Luxembourg · LIH Luxembourg ·
+    University of Oslo · NTNU · NORBIS · Jobbnorge ·
+    University of Helsinki · University of Turku · Åbo Akademi ·
+    IMP Vienna · IMBA · CeMM · Medical University of Vienna ·
+    University of Toronto · McGill · UBC ·
+    A*STAR · NUS · Duke-NUS ·
+    WEHI · Garvan · Monash ·
+    AstraZeneca · Roche · Novartis · BioNTech · Lonza · Bayer · Thermo Fisher · Sartorius · Miltenyi Biotec · 10x Genomics<br><br>
     <strong>🔗 Quick portals:</strong>
     <a href="https://euraxess.ec.europa.eu/jobs/search" target="_blank">EURAXESS</a> ·
     <a href="https://www.nature.com/naturecareers" target="_blank">Nature Careers</a> ·
-    <a href="https://academicpositions.com/jobs/position/phd/field/immunology" target="_blank">Academic Positions</a> ·
+    <a href="https://www.jobs.ac.uk/search/?keywords=phd+immunology+cell+biology" target="_blank">jobs.ac.uk</a> ·
+    <a href="https://jobrxiv.org/job/?search=stem+cell+immunology" target="_blank">jobrxiv</a> ·
     <a href="https://www.scilifelab.se/careers/" target="_blank">SciLifeLab</a> ·
-    <a href="https://vib.be/careers" target="_blank">VIB Careers</a>
+    <a href="https://vib.be/careers" target="_blank">VIB Careers</a> ·
+    <a href="https://careers.a-star.edu.sg" target="_blank">A*STAR</a> ·
+    <a href="https://www.wehi.edu.au/careers/" target="_blank">WEHI</a>
   </div>
 </div>
 
@@ -743,12 +760,24 @@ function daysSinceFound(job) {
   } catch { return 999; }
 }
 
-// Returns 'new' (0-7 days), 'recent' (8-14 days), or null (15+)
+// Returns 0-7 for badge, or null for 8+ days (no badge)
 function freshness(job) {
   const d = daysSinceFound(job);
-  if (d <= 7)  return 'new';
-  if (d <= 14) return 'recent';
-  return null;
+  return d <= 7 ? d : null;
+}
+
+// Returns the badge label for a given day count
+function freshnessLabel(days) {
+  if (days === 0) return '✦ Just Found';
+  if (days === 1) return '✦ Found Yesterday';
+  return `✦ Found ${days} days ago`;
+}
+
+// Builds the freshness badge HTML — null if job is 8+ days old
+function freshnessBadge(job) {
+  const d = freshness(job);
+  if (d === null) return '';
+  return `<span class="freshness-badge fresh-${d}">${freshnessLabel(d)}</span>`;
 }
 
 // Human-readable "Added: 21 May 2026" or "Found 2 days ago"
@@ -814,14 +843,8 @@ function buildCard(job) {
   const status = statuses[job.id] || 'none';
   const isPhd = job.type === 'phd';
   const statusCls = status !== 'none' ? `status-${status}` : '';
-  const fresh = freshness(job);
   const dateLabel = formatDateFound(job);
-
-  const freshBadge = fresh === 'new'
-    ? `<span class="freshness-badge is-new">🆕 NEW</span>`
-    : fresh === 'recent'
-    ? `<span class="freshness-badge is-recent">🕐 RECENT</span>`
-    : '';
+  const badge = freshnessBadge(job);
 
   return `
   <div class="card ${job.type} tier-${job.tier} ${statusCls}" id="card-${job.id}" data-tier="${job.tier}" data-type="${job.type}" data-status="${status}" data-country="${job.country}" data-score="${job.score}" data-days="${daysSinceFound(job)}">
@@ -829,7 +852,7 @@ function buildCard(job) {
       <div>
         <div class="card-meta-row">
           <div class="card-org ${isPhd ? 'b' : 'g'}">${job.org}</div>
-          ${freshBadge}
+          ${badge}
         </div>
         ${dateLabel ? `<div class="date-found">${dateLabel}</div>` : ''}
       </div>
@@ -856,7 +879,6 @@ function buildCard(job) {
 }
 
 function renderAll() {
-  // Apply sort to entire jobs array for sorted views
   const sortedJobs = applySort(jobs);
 
   const grids = { high: 'grid-high', medium: 'grid-med', stretch: 'grid-str' };
@@ -872,22 +894,6 @@ function renderAll() {
   document.getElementById('cnt-med').textContent = `${counts.medium} positions`;
   document.getElementById('cnt-str').textContent = `${counts.stretch} positions`;
   document.getElementById('statTotal').textContent = jobs.length;
-
-  // ── New This Week section ──
-  const newJobs = sortedJobs.filter(j => daysSinceFound(j) <= 7);
-  const newSection = document.getElementById('newThisWeek');
-  const newGrid = document.getElementById('grid-new');
-  const newCount = document.getElementById('newThisWeekCount');
-  if (newJobs.length > 0) {
-    newGrid.innerHTML = newJobs.map(buildCard).join('');
-    newCount.textContent = `${newJobs.length} position${newJobs.length === 1 ? '' : 's'}`;
-    newSection.style.display = '';
-  } else {
-    newSection.style.display = 'none';
-  }
-
-  // ── Stats ──
-  document.getElementById('statNew').textContent = newJobs.length;
 
   applyFilter();
 
@@ -944,63 +950,70 @@ function toggleHideProcessed(checked) {
 
 function applyFilter() {
   const cards = document.querySelectorAll('.card');
-  let visible = 0;
 
   cards.forEach(card => {
     let show = true;
 
-    // Country filter
-    if (card.dataset.country !== currentCountry) {
-      show = false;
-    }
+    if (card.dataset.country !== currentCountry) show = false;
 
-    // Tier/type filter
     if (show && currentFilter !== 'all') {
       show = card.classList.contains(currentFilter);
     }
 
-    // Hide processed
     if (show && hideProcessed) {
       const s = card.dataset.status;
       if (s === 'applied' || s === 'rejected' || s === 'closed') show = false;
     }
 
     card.classList.toggle('hidden-card', !show);
-    if (show && !card.closest('#newThisWeek')) visible++;
   });
 
-  // Update visible count (exclude New This Week cards from double-counting)
-  const visibleCards = document.querySelectorAll('#grid-high .card:not(.hidden-card), #grid-med .card:not(.hidden-card), #grid-str .card:not(.hidden-card)');
+  const visibleCards = document.querySelectorAll(
+    '#grid-high .card:not(.hidden-card), #grid-med .card:not(.hidden-card), #grid-str .card:not(.hidden-card)'
+  );
   document.getElementById('statVisible').textContent = visibleCards.length;
 
   // Show/hide tier headers
-  const tiers = ['high','medium','stretch'];
-  tiers.forEach(tier => {
+  ['high','medium','stretch'].forEach(tier => {
     const gridId = tier === 'high' ? 'grid-high' : tier === 'medium' ? 'grid-med' : 'grid-str';
-    const hdId = tier === 'high' ? 'hd-high' : tier === 'medium' ? 'hd-med' : 'hd-str';
-    const visibleInTier = document.querySelectorAll(`#${gridId} .card:not(.hidden-card)`).length;
-    document.getElementById(hdId).style.display = visibleInTier === 0 ? 'none' : '';
-    document.getElementById(gridId).style.display = visibleInTier === 0 ? 'none' : '';
+    const hdId   = tier === 'high' ? 'hd-high'   : tier === 'medium' ? 'hd-med'   : 'hd-str';
+    const n = document.querySelectorAll(`#${gridId} .card:not(.hidden-card)`).length;
+    document.getElementById(hdId).style.display   = n === 0 ? 'none' : '';
+    document.getElementById(gridId).style.display = n === 0 ? 'none' : '';
   });
-
-  // New This Week: show/hide based on country filter
-  const newThisWeekVisible = document.querySelectorAll('#grid-new .card:not(.hidden-card)').length;
-  const newThisWeek = document.getElementById('newThisWeek');
-  if (newThisWeek) {
-    const hasNewJobs = document.querySelectorAll('#grid-new .card').length > 0;
-    newThisWeek.style.display = (hasNewJobs && newThisWeekVisible > 0) ? '' : 'none';
-    const newCount = document.getElementById('newThisWeekCount');
-    if (newCount) newCount.textContent = `${newThisWeekVisible} position${newThisWeekVisible === 1 ? '' : 's'}`;
-    document.getElementById('statNew').textContent = newThisWeekVisible;
-  }
 
   document.getElementById('emptyState').classList.toggle('show', visibleCards.length === 0);
   updateStatCounts();
 }
 
 // ─────────────────────────────────────────────
-// PORTAL MODAL
+// AUTO-REFRESH ON FIRST LOAD OF THE DAY
 // ─────────────────────────────────────────────
+const LAST_AUTO_REFRESH_KEY = 'kavya_last_auto_refresh';
+
+function shouldAutoRefresh() {
+  try {
+    const last = localStorage.getItem(LAST_AUTO_REFRESH_KEY);
+    if (!last) return true; // never refreshed
+    const lastDate = new Date(last).toDateString();
+    const today    = new Date().toDateString();
+    return lastDate !== today; // different calendar day → refresh
+  } catch { return false; }
+}
+
+function markAutoRefreshed() {
+  try { localStorage.setItem(LAST_AUTO_REFRESH_KEY, new Date().toISOString()); } catch {}
+}
+
+function autoRefreshIfNeeded() {
+  if (!shouldAutoRefresh()) return;
+  markAutoRefreshed();
+  // Small delay so the board renders first, then silently refresh
+  setTimeout(() => {
+    console.log('🔄 Auto-refreshing board (first load today)...');
+    refreshJobs();
+  }, 1800);
+}
 const PORTALS = {
   sweden: [
     { name: 'Uppsala University', url: 'https://uu.varbi.com' },
@@ -1052,9 +1065,53 @@ const PORTALS = {
   ],
   luxembourg: [
     { name: 'University of Luxembourg', url: 'https://wwwfr.uni.lu/university/jobs' },
-    { name: 'Luxembourg Institute of Health', url: 'https://www.lih.lu/en/careers/vacancies/' },
+    { name: 'Luxembourg Institute of Health', url: 'https://www.lih.lu/en/join-us/' },
     { name: 'LIST (Science & Tech)', url: 'https://www.list.lu/en/jobs/' },
     { name: 'EURAXESS Luxembourg', url: 'https://www.euraxess.lu/' }
+  ],
+  norway: [
+    { name: 'Jobbnorge (Norwegian Academic Jobs)', url: 'https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64' },
+    { name: 'University of Oslo', url: 'https://www.uio.no/english/about/jobs/' },
+    { name: 'Oslo University Hospital', url: 'https://www.oslo-universitetssykehus.no/en/about-us/jobs/' },
+    { name: 'NTNU', url: 'https://www.ntnu.edu/vacancies' },
+    { name: 'NORBIS PhD Positions', url: 'https://norbis.w.uib.no/phd-positions/' },
+    { name: 'Academic Positions (Norway)', url: 'https://academicpositions.com/jobs/position/phd/country/norway' }
+  ],
+  finland: [
+    { name: 'University of Helsinki', url: 'https://www.helsinki.fi/en/about-us/careers/open-positions' },
+    { name: 'University of Turku', url: 'https://www.utu.fi/en/university/open-positions' },
+    { name: 'Åbo Akademi', url: 'https://www.abo.fi/en/about-abo-akademi/jobs-and-vacancies/' },
+    { name: 'THL (Finnish Institute for Health)', url: 'https://thl.fi/en/about-thl/open-vacancies' },
+    { name: 'Academic Positions (Finland)', url: 'https://academicpositions.com/jobs/position/phd/country/finland' }
+  ],
+  austria: [
+    { name: 'IMP Vienna', url: 'https://www.imp.ac.at/career/open-positions/' },
+    { name: 'IMBA Vienna', url: 'https://www.imba.oeaw.ac.at/about-imba/careers/open-positions/' },
+    { name: 'CeMM Vienna', url: 'https://cemm.at/career/' },
+    { name: 'Medical University of Vienna', url: 'https://jobcenter.meduniwien.ac.at/en/open-positions/' },
+    { name: 'University of Vienna', url: 'https://jobcenter.univie.ac.at/en/jobs-and-vacancies/' },
+    { name: 'Academic Positions (Austria)', url: 'https://academicpositions.com/jobs/position/phd/country/austria' }
+  ],
+  canada: [
+    { name: 'University of Toronto Careers', url: 'https://jobs.utoronto.ca/search/?q=immunology+stem+cell' },
+    { name: 'McGill University', url: 'https://www.mcgill.ca/careers/academic' },
+    { name: 'UBC Careers', url: 'https://www.hr.ubc.ca/careers/' },
+    { name: 'Nature Careers Canada', url: 'https://www.nature.com/naturecareers/jobs/science-jobs/canada/?keywords=immunology+stem+cell' },
+    { name: 'Academic Positions (Canada)', url: 'https://academicpositions.com/find-jobs/?q=immunology+phd&country=canada' }
+  ],
+  singapore: [
+    { name: 'A*STAR Careers', url: 'https://careers.a-star.edu.sg/search/?q=immunology+stem+cell' },
+    { name: 'NUS Careers', url: 'https://careers.nus.edu.sg' },
+    { name: 'Duke-NUS Medical School', url: 'https://www.duke-nus.edu.sg/about/careers' },
+    { name: 'NTU Careers', url: 'https://www.ntu.edu.sg/about-us/careers' },
+    { name: 'Nature Careers Singapore', url: 'https://www.nature.com/naturecareers/jobs/science-jobs/singapore/?keywords=immunology+cell+biology' }
+  ],
+  australia: [
+    { name: 'WEHI Careers', url: 'https://www.wehi.edu.au/careers/' },
+    { name: 'Garvan Institute', url: 'https://www.garvan.org.au/about-us/work-with-us' },
+    { name: 'Monash University Careers', url: 'https://careers.pageuppeople.com/513/cw/en/listing/' },
+    { name: 'Nature Careers Australia', url: 'https://www.nature.com/naturecareers/jobs/science-jobs/australia/?keywords=immunology+stem+cell' },
+    { name: 'Seek.com.au (Life Sciences)', url: 'https://www.seek.com.au/jobs?keywords=immunology+cell+biology+research+scientist' }
   ]
 };
 
@@ -1326,6 +1383,8 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('apiModal').addEventListener('click', e => {
     if (e.target === document.getElementById('apiModal')) closeModal();
   });
+  // Auto-refresh on first load of the day
+  autoRefreshIfNeeded();
 });
 </script>
 </body>
