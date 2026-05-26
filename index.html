@@ -212,68 +212,24 @@ body::before {
 .sort-select:hover { border-color: var(--accent); }
 .sort-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(78,204,163,0.1); }
 
-/* ─── JUST FOUND DAY BADGES ─── */
-/* Each badge shows how many days ago a job was found.
-   Intensity fades from bright green (day 0) → muted teal (day 7).
-   No badge shown for 8+ days. */
+/* ─── JUST FOUND BADGE — single red pill, white text ─── */
 .freshness-badge {
   display: inline-flex; align-items: center; gap: 3px;
-  font-size: 9px; font-weight: 700; letter-spacing: 0.4px;
-  padding: 2px 8px; border-radius: 4px; text-transform: uppercase;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 3px 8px; border-radius: 4px; text-transform: uppercase;
   flex-shrink: 0; white-space: nowrap;
+  background: #c0392b;
+  color: #ffffff;
+  border: none;
 }
-/* Day 0 — Just Found — brightest, animated pulse */
-.fresh-0 {
-  background: rgba(78,204,163,0.18); color: #4ecca3;
-  border: 1px solid rgba(78,204,163,0.45);
-  animation: freshPulse 2.2s ease-in-out infinite;
-}
-/* Day 1 */
-.fresh-1 {
-  background: rgba(78,204,163,0.13); color: #4ec8a0;
-  border: 1px solid rgba(78,204,163,0.35);
-}
-/* Day 2 */
-.fresh-2 {
-  background: rgba(78,204,163,0.10); color: #45b894;
-  border: 1px solid rgba(78,204,163,0.28);
-}
-/* Day 3 */
-.fresh-3 {
-  background: rgba(78,204,163,0.08); color: #3da888;
-  border: 1px solid rgba(78,204,163,0.22);
-}
-/* Day 4 */
-.fresh-4 {
-  background: rgba(78,204,163,0.06); color: #35987c;
-  border: 1px solid rgba(78,204,163,0.17);
-}
-/* Day 5 */
-.fresh-5 {
-  background: rgba(78,204,163,0.05); color: #2d8870;
-  border: 1px solid rgba(78,204,163,0.14);
-}
-/* Day 6 */
-.fresh-6 {
-  background: rgba(78,204,163,0.04); color: #257864;
-  border: 1px solid rgba(78,204,163,0.11);
-}
-/* Day 7 — most faded but still visible */
-.fresh-7 {
-  background: rgba(78,204,163,0.03); color: #1e6858;
-  border: 1px solid rgba(78,204,163,0.09);
-}
+/* Day 0 only gets a subtle pulse to draw extra attention */
+.fresh-0 { animation: freshPulse 2.2s ease-in-out infinite; }
 @keyframes freshPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(78,204,163,0.2); }
-  50%       { box-shadow: 0 0 0 5px rgba(78,204,163,0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,43,0.35); }
+  50%       { box-shadow: 0 0 0 5px rgba(192,57,43,0); }
 }
 
-/* ─── DATE FOUND LABEL ─── */
-.date-found {
-  font-size: 10px; color: var(--muted); margin-top: 1px;
-}
-
-/* ─── CARD META ROW (org + badges) ─── */
+/* ─── CARD META ROW (org + badge) ─── */
 .card-meta-row {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 }
@@ -843,7 +799,6 @@ function buildCard(job) {
   const status = statuses[job.id] || 'none';
   const isPhd = job.type === 'phd';
   const statusCls = status !== 'none' ? `status-${status}` : '';
-  const dateLabel = formatDateFound(job);
   const badge = freshnessBadge(job);
 
   return `
@@ -854,7 +809,6 @@ function buildCard(job) {
           <div class="card-org ${isPhd ? 'b' : 'g'}">${job.org}</div>
           ${badge}
         </div>
-        ${dateLabel ? `<div class="date-found">${dateLabel}</div>` : ''}
       </div>
       <div class="score ${scoreClass(job.score)}">${job.score}/100</div>
     </div>
@@ -864,14 +818,13 @@ function buildCard(job) {
     <div class="tags">${job.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
     <div class="why">${job.why}</div>
     <div class="card-footer">
-        <div class="status-row">
-          <select class="status-select s-${status}" onchange="setStatus('${job.id}', this.value, this)">
-            <option value="none" ${status==='none'?'selected':''}>— Track status</option>
-            <option value="applied" ${status==='applied'?'selected':''}>✓ Applied</option>
-            <option value="rejected" ${status==='rejected'?'selected':''}>✗ Rejected</option>
-            <option value="closed" ${status==='closed'?'selected':''}>⊘ Closed</option>
-          </select>
-        </div>
+      <div class="status-row">
+        <select class="status-select s-${status}" onchange="setStatus('${job.id}', this.value, this)">
+          <option value="none" ${status==='none'?'selected':''}>— Track status</option>
+          <option value="applied" ${status==='applied'?'selected':''}>✓ Applied</option>
+          <option value="rejected" ${status==='rejected'?'selected':''}>✗ Rejected</option>
+          <option value="closed" ${status==='closed'?'selected':''}>⊘ Closed</option>
+        </select>
       </div>
       <a class="apply-btn ${isPhd ? 'b' : 'g'}" href="${job.url}" target="_blank">Apply →</a>
     </div>
@@ -1235,7 +1188,12 @@ function refreshJobs() {
   };
 
   setTimeout(() => {
-    fetch(API_URL)
+    // Use axios.post with 120s timeout — scraper runs can take up to 2 minutes
+    axios.post(API_URL.replace('/api/jobs', '') + '/api/jobs/trigger', {}, { timeout: 120000 })
+      .catch(() => {}) // fire-and-forget trigger (if server supports it)
+      .finally(() => {});
+
+    fetch(API_URL, { signal: AbortSignal.timeout(120000) })
       .then(res => {
         if (!res.ok) throw new Error('API returned ' + res.status);
         return res.json();

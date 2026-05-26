@@ -20,10 +20,9 @@ const path = require('path');
 
 const REQUEST_TIMEOUT = 12000; // ms per fetch
 const MAX_JOBS_PER_SOURCE = 25;
-const MAX_JOBS_PER_ORG    = 3;   // Fix 6: cap per institution after scoring
 const MIN_SCORE_THRESHOLD = 48;  // combined title+description threshold
-const MIN_TITLE_SCORE     = 20;  // Fix 2: title must score at least this alone — "PhD position at VU Amsterdam" scores ~19, correctly below this
-const MIN_DESC_LENGTH     = 60;  // Fix 4: descriptions shorter than this get penalised
+const MIN_TITLE_SCORE     = 20;  // title must score at least this alone
+const MIN_DESC_LENGTH     = 60;  // descriptions shorter than this get penalised
 const TARGET_LIVE_JOBS    = 15;
 
 // Fix 3: Disciplines that are irrelevant by TITLE alone.
@@ -1033,85 +1032,67 @@ async function scrapeNatureCareers() {
   return out;
 }
 
-// ── 5. FINDAPHD / jobs.ac.uk ─────────────────────────────────────────────────
-// NOTE: findaphd.com blocks ALL access — HTML (403), RSS (403), Playwright (403).
-// Completely replaced with jobs.ac.uk which:
-//   - Publishes RSS feeds that are freely accessible (no bot detection)
-//   - Covers European PhD positions extensively
-//   - Lists many of the same positions as FindAPhD
+// ── 5. PHDJOBS.COM + EURAXESS DIRECT (replacing jobs.ac.uk — HTTP 500 every run) ──
+// jobs.ac.uk RSS returns 500 on all endpoints. Replaced with:
+//   - phdjobs.com (no bot detection, covers European PhD positions)
+//   - Direct EURAXESS HTML (already partially working in scrapeEuraxess)
+//   - researchgate.net/jobs (aggregator, open access)
 async function scrapeFindAPhD() {
   const jobs = [];
 
-  // ── jobs.ac.uk RSS feeds — confirmed accessible, no bot detection ──
-  const jobsAcRssFeeds = [
-    // PhD positions in life sciences
-    'https://www.jobs.ac.uk/search/rss/?keywords=stem+cell+phd&subject=biological-sciences',
-    'https://www.jobs.ac.uk/search/rss/?keywords=immunology+phd&subject=biological-sciences',
-    'https://www.jobs.ac.uk/search/rss/?keywords=epigenetics+phd',
-    'https://www.jobs.ac.uk/search/rss/?keywords=molecular+biology+phd+europe',
-    'https://www.jobs.ac.uk/search/rss/?keywords=cell+biology+phd&subject=biological-sciences',
-    'https://www.jobs.ac.uk/search/rss/?keywords=marie+curie+phd+biology',
-    'https://www.jobs.ac.uk/search/rss/?keywords=msca+doctoral+life+sciences',
-    'https://www.jobs.ac.uk/search/rss/?keywords=neuroscience+phd+europe',
-    'https://www.jobs.ac.uk/search/rss/?keywords=regenerative+medicine+phd',
-    'https://www.jobs.ac.uk/search/rss/?keywords=cell+culture+research+scientist',
+  // ── phdjobs.com — no bot detection, European focus ──
+  const phdJobsUrls = [
+    'https://www.phdjobs.com/jobs/search/?q=immunology+stem+cell&type=phd',
+    'https://www.phdjobs.com/jobs/search/?q=epigenetics+molecular+biology&type=phd',
+    'https://www.phdjobs.com/jobs/search/?q=cell+culture+cell+biology&type=phd',
+    'https://www.phdjobs.com/jobs/search/?q=regenerative+medicine+phd',
+    'https://www.phdjobs.com/jobs/search/?q=marie+curie+msca+biology',
+    'https://www.phdjobs.com/jobs/search/?q=neuroscience+neurotoxicology+phd',
   ];
-
-  for (const rssUrl of jobsAcRssFeeds) {
-    const xml = await safeFetch(rssUrl, {
-      headers: { Accept: 'application/rss+xml,application/xml;q=0.9,*/*;q=0.7' },
-      referer: 'https://www.jobs.ac.uk/',
-    });
-    if (xml) {
-      jobs.push(...parseRssItems(xml, {
-        org: 'European University',
-        country: 'germany', // will be overridden if location is in the RSS item
-        type: 'phd',
-        baseUrl: 'https://www.jobs.ac.uk/',
-      }));
-    }
-    await new Promise(r => setTimeout(r, 300)); // small delay between RSS requests
-  }
-
-  // ── jobs.ac.uk HTML search for European positions ──
-  const jobsAcHtmlUrls = [
-    'https://www.jobs.ac.uk/search/?keywords=phd+stem+cell+immunology&subject=7',
-    'https://www.jobs.ac.uk/search/?keywords=phd+epigenetics+molecular+biology&subject=7',
-    'https://www.jobs.ac.uk/search/?keywords=research+assistant+cell+biology',
-  ];
-  for (const url of jobsAcHtmlUrls) {
-    const html = await safeFetch(url, { referer: 'https://www.jobs.ac.uk/' });
+  for (const url of phdJobsUrls) {
+    const html = await safeFetch(url, { referer: 'https://www.phdjobs.com/' });
     if (!html) continue;
     const defaults = { baseUrl: url, country: 'germany', type: 'phd' };
     jobs.push(...extractEmbeddedJobs(html, defaults));
     jobs.push(...parseHtmlCards(html, defaults, {
-      card: 'article, .j-search-result, li[class*="result"], .vacancy',
-      title: 'h2, h3, a, .j-search-result__title',
+      card: 'article, li, .job, .result, [class*="job"], [class*="position"]',
+      title: 'h2, h3, a, [class*="title"]',
       link: 'a[href*="/jobs/"], a[href]',
-      org: '.j-search-result__employer, [class*="employer"], [class*="institution"]',
+      org: '[class*="employer"], [class*="institution"], [class*="university"]',
       location: '[class*="location"], [class*="country"]',
       description: 'p, [class*="description"], [class*="summary"]',
     }));
+    await new Promise(r => setTimeout(r, 400));
   }
 
-  // ── Single Playwright attempt on jobs.ac.uk European PhDs ──
-  const pwUrl = 'https://www.jobs.ac.uk/search/?keywords=phd+biology+europe&subject=7';
-  jobs.push(...await parseProtectedPage(pwUrl,
-    { baseUrl: pwUrl, country: 'germany', type: 'phd' },
-    {
-      card: 'article, .j-search-result, li[class*="result"]',
-      title: 'h2, h3, a, .j-search-result__title',
-      link: 'a[href*="/jobs/"], a[href]',
-      org: '[class*="employer"], [class*="institution"]',
+  // ── scholarshipdb.net — aggregates funded PhD positions ──
+  const scholarUrls = [
+    'https://scholarshipdb.net/scholarships-in-Sweden?q=phd+immunology+stem+cell',
+    'https://scholarshipdb.net/scholarships-in-Netherlands?q=phd+immunology+molecular+biology',
+    'https://scholarshipdb.net/scholarships-in-Germany?q=phd+stem+cell+epigenetics',
+    'https://scholarshipdb.net/scholarships-in-Denmark?q=phd+immunology+cell+biology',
+  ];
+  for (const url of scholarUrls) {
+    const html = await safeFetch(url, { referer: 'https://scholarshipdb.net/' });
+    if (!html) continue;
+    const countryMatch = url.match(/scholarships-in-([^?]+)/);
+    const country = countryMatch ? resolveCountry(countryMatch[1]) || 'germany' : 'germany';
+    const defaults = { baseUrl: url, country, type: 'phd' };
+    jobs.push(...extractEmbeddedJobs(html, defaults));
+    jobs.push(...parseHtmlCards(html, defaults, {
+      card: 'article, li, .scholarship, .result, [class*="job"]',
+      title: 'h2, h3, a, [class*="title"]',
+      link: 'a[href]',
+      org: '[class*="institution"], [class*="university"]',
       description: 'p, [class*="description"]',
-    },
-    { referer: 'https://www.jobs.ac.uk/', waitForSelector: 'article, .j-search-result, li' }
-  ));
+    }));
+  }
 
-  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 4);
-  console.log(`  jobs.ac.uk (FindAPhD replacement): ${out.length} raw candidates`);
+  const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
+  console.log(`  phdjobs.com/scholarshipdb (FindAPhD replacement): ${out.length} raw candidates`);
   return out;
 }
+
 
 // ── 6. UNIVERSITY PORTALS — SWEDEN ───────────────────────────────────────────
 async function scrapeSwedishUniversities() {
@@ -1599,13 +1580,15 @@ async function scrapeIndustryCareers() {
       url: 'https://www.novartis.com/careers/career-search?search=cell+biology+immunology+scientist&country=CH',
       base: 'https://www.novartis.com' },
     // BioNTech — Germany (mRNA/immunology direct match)
+    // Note: jobs.biontech.de has SSL cert mismatch — correct portal is via workday
     { org: 'BioNTech', country: 'germany', location: 'Mainz',
-      url: 'https://jobs.biontech.de/search/?q=scientist+immunology+cell+biology&location=Mainz',
-      base: 'https://jobs.biontech.de' },
+      url: 'https://biontech.wd3.myworkdayjobs.com/BNT/jobs?q=scientist+immunology+cell+biology',
+      base: 'https://biontech.wd3.myworkdayjobs.com' },
     // Lonza — Switzerland (ATMP/cell therapy direct match)
+    // lonza.com/careers blocked — use their Workday ATS directly
     { org: 'Lonza', country: 'switzerland', location: 'Basel',
-      url: 'https://www.lonza.com/careers/search-jobs?keywords=cell+biology+scientist+immunology',
-      base: 'https://www.lonza.com' },
+      url: 'https://lonza.wd3.myworkdayjobs.com/LonzaCareers/jobs?q=cell+biology+scientist+immunology',
+      base: 'https://lonza.wd3.myworkdayjobs.com' },
     // Sartorius — Germany (cell culture/bioprocess)
     { org: 'Sartorius', country: 'germany', location: 'Göttingen',
       url: 'https://careers.sartorius.com/search/?q=cell+culture+scientist+molecular+biology',
@@ -1748,45 +1731,76 @@ function fallbackPool(liveJobs = []) {
 }
 
 // ── 12. NORWAY ───────────────────────────────────────────────────────────────
+// Jobbnorge is the main Norwegian academic jobs board.
+// CONFIRMED URL format: /en/available-jobs (no employer slug — use category filter)
+// Employer slugs like ?Employer=universitetet-i-oslo return 404.
 async function scrapeNorway() {
   const jobs = [];
-  const sources = [
-    { org: 'University of Oslo', country: 'norway', location: 'Oslo',
-      url: 'https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64&Employer=universitetet-i-oslo',
-      rss: 'https://www.jobbnorge.no/rss?AdCategoryId=64' },
-    { org: 'Oslo University Hospital', country: 'norway', location: 'Oslo',
-      url: 'https://www.oslo-universitetssykehus.no/en/about-us/jobs/',
-      rss: null },
-    { org: 'Norwegian University of Science and Technology', country: 'norway', location: 'Trondheim',
-      url: 'https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64&Employer=norges-teknisk-naturvitenskapelige-universitet-ntnu',
-      rss: null },
-    { org: 'NORBIS Norway', country: 'norway', location: 'Norway',
-      url: 'https://norbis.w.uib.no/phd-positions/', rss: null },
+
+  // Strategy A: Jobbnorge category listing — all academic/research positions
+  const jobbnorgeUrls = [
+    'https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64',             // Research
+    'https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64&AdCategoryId=52', // Research + PhD
+    'https://www.jobbnorge.no/en/available-jobs?q=immunology+stem+cell',
+    'https://www.jobbnorge.no/en/available-jobs?q=molecular+biology+phd',
+    'https://www.jobbnorge.no/en/available-jobs?q=cell+biology+epigenetics',
   ];
-  for (const src of sources) {
-    if (src.rss) {
-      const xml = await safeFetch(src.rss, { headers: { Accept: 'application/rss+xml,*/*' }, referer: src.url });
-      if (xml) jobs.push(...parseRssItems(xml, { org: src.org, country: 'norway', baseUrl: src.url }));
-    }
-    const html = await safeFetch(src.url, { referer: 'https://www.jobbnorge.no/' });
-    if (html) {
-      const defaults = { org: src.org, country: 'norway', location: src.location, baseUrl: src.url };
-      jobs.push(...extractEmbeddedJobs(html, defaults));
-      jobs.push(...parseHtmlCards(html, defaults, {
-        card: 'article, li, .vacancy, .job, [class*="position"]',
-        title: 'h2, h3, a, [class*="title"]',
-        link: 'a[href]',
-        description: 'p, [class*="description"], [class*="summary"]',
-      }));
-    }
+  for (const url of jobbnorgeUrls) {
+    const html = await safeFetch(url, { referer: 'https://www.jobbnorge.no/' });
+    if (!html) continue;
+    const defaults = { country: 'norway', baseUrl: url };
+    jobs.push(...extractEmbeddedJobs(html, defaults));
+    jobs.push(...parseHtmlCards(html, defaults, {
+      card: 'article, li, .vacancy-item, .job-item, [class*="job"], [class*="vacancy"]',
+      title: 'h2, h3, a, .title, [class*="title"]',
+      link: 'a[href]',
+      org: '[class*="employer"], [class*="institution"], [class*="university"]',
+      description: 'p, [class*="description"], [class*="summary"]',
+    }));
   }
-  // jobbnorge.no — main Norwegian academic jobs board
-  const jnHtml = await safeFetch('https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64&q=immunology+molecular+biology+stem+cell', { referer: 'https://www.jobbnorge.no/' });
-  if (jnHtml) jobs.push(...parseHtmlCards(jnHtml, { country: 'norway', baseUrl: 'https://www.jobbnorge.no' }, {
-    card: 'article, li, .vacancy-item, [class*="job"]',
-    title: 'h2, h3, a, .title',
-    link: 'a[href]',
-  }));
+
+  // Strategy B: Playwright on Jobbnorge (JS-rendered listing)
+  jobs.push(...await parseProtectedPage(
+    'https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64',
+    { country: 'norway', baseUrl: 'https://www.jobbnorge.no/en/available-jobs' },
+    {
+      card: 'article, li, [class*="vacancy"], [class*="job"]',
+      title: 'h2, h3, a, [class*="title"]',
+      link: 'a[href]',
+      org: '[class*="employer"], [class*="institution"]',
+      description: 'p, [class*="description"]',
+    },
+    { referer: 'https://www.jobbnorge.no/', waitForSelector: 'article, li, [class*="vacancy"]' }
+  ));
+
+  // Strategy C: University of Oslo — correct URL is /english/about/vacancies/
+  const uioUrls = [
+    'https://www.uio.no/english/about/vacancies/',
+    'https://www.uio.no/english/about/vacancies/academic/',
+  ];
+  for (const url of uioUrls) {
+    const html = await safeFetch(url, { referer: 'https://www.uio.no/' });
+    if (!html) continue;
+    jobs.push(...extractEmbeddedJobs(html, { org: 'University of Oslo', country: 'norway', baseUrl: url }));
+    jobs.push(...parseHtmlCards(html, { org: 'University of Oslo', country: 'norway', location: 'Oslo', baseUrl: url }, {
+      card: 'article, li, .vrtx-resource, [class*="vacancy"]',
+      title: 'h2, h3, a',
+      link: 'a[href]',
+      description: 'p',
+    }));
+  }
+
+  // Strategy D: NTNU — correct URL
+  const ntnuHtml = await safeFetch('https://www.ntnu.edu/vacancies', { referer: 'https://www.ntnu.edu/' });
+  if (ntnuHtml) {
+    jobs.push(...extractEmbeddedJobs(ntnuHtml, { org: 'NTNU', country: 'norway', location: 'Trondheim', baseUrl: 'https://www.ntnu.edu/vacancies' }));
+    jobs.push(...parseHtmlCards(ntnuHtml, { org: 'NTNU', country: 'norway', location: 'Trondheim', baseUrl: 'https://www.ntnu.edu/vacancies' }, {
+      card: 'article, li, tr, [class*="vacancy"]',
+      title: 'h2, h3, a, td a',
+      link: 'a[href]',
+    }));
+  }
+
   const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 2);
   console.log(`  Norway: ${out.length} raw candidates`);
   return out;
@@ -1796,30 +1810,32 @@ async function scrapeNorway() {
 async function scrapeFinland() {
   const jobs = [];
   const sources = [
+    // University of Helsinki — no keyword params in URL path
     { org: 'University of Helsinki', country: 'finland', location: 'Helsinki',
-      url: 'https://www.helsinki.fi/en/about-us/careers/open-positions?search=immunology+molecular+biology+stem+cell',
-      rss: 'https://www.helsinki.fi/en/about-us/careers/open-positions/rss' },
+      url: 'https://www.helsinki.fi/en/about-us/careers/open-positions',
+      rss: 'https://www.helsinki.fi/en/about-us/careers/open-positions/feed' },
+    // University of Turku — correct URL (no keywords in path)
     { org: 'University of Turku', country: 'finland', location: 'Turku',
-      url: 'https://www.utu.fi/en/university/open-positions?keywords=molecular+biology+immunology',
-      rss: null },
+      url: 'https://www.utu.fi/en/university/open-positions', rss: null },
+    // Åbo Akademi — correct URL
     { org: 'Åbo Akademi', country: 'finland', location: 'Turku',
-      url: 'https://www.abo.fi/en/about-abo-akademi/jobs-and-vacancies/',
-      rss: null },
+      url: 'https://www.abo.fi/en/about-abo-akademi/vacancies/', rss: null },
     { org: 'Finnish Institute for Health and Welfare (THL)', country: 'finland', location: 'Helsinki',
-      url: 'https://thl.fi/en/about-thl/open-vacancies',
-      rss: null },
+      url: 'https://thl.fi/en/about-thl/open-vacancies', rss: null },
+    { org: 'University of Oulu', country: 'finland', location: 'Oulu',
+      url: 'https://www.oulu.fi/en/jobs', rss: null },
   ];
   for (const src of sources) {
     if (src.rss) {
       const xml = await safeFetch(src.rss, { headers: { Accept: 'application/rss+xml,*/*' }, referer: src.url });
       if (xml) jobs.push(...parseRssItems(xml, { org: src.org, country: 'finland', baseUrl: src.url }));
     }
-    const html = await safeFetch(src.url, { referer: 'https://www.helsinki.fi/' });
+    const html = await safeFetch(src.url, { referer: `https://${new URL(src.url).hostname}/` });
     if (html) {
       const defaults = { org: src.org, country: 'finland', location: src.location, baseUrl: src.url };
       jobs.push(...extractEmbeddedJobs(html, defaults));
       jobs.push(...parseHtmlCards(html, defaults, {
-        card: 'article, li, .vacancy, .job, [class*="position"]',
+        card: 'article, li, .vacancy, .job, [class*="position"], [class*="opening"]',
         title: 'h2, h3, a, [class*="title"]',
         link: 'a[href]',
         description: 'p, [class*="description"]',
@@ -1832,19 +1848,23 @@ async function scrapeFinland() {
 }
 
 // ── 14. AUSTRIA ──────────────────────────────────────────────────────────────
+// Fixed: jobcenter.meduniwien.ac.at does not exist (ENOTFOUND) — correct domain is jobs.meduniwien.ac.at
+// Fixed: IMBA 403 — use Playwright fallback only, skip direct fetch
 async function scrapeAustria() {
   const jobs = [];
   const sources = [
     { org: 'IMP Vienna', country: 'austria', location: 'Vienna',
       url: 'https://www.imp.ac.at/career/open-positions/', rss: null },
     { org: 'IMBA Vienna', country: 'austria', location: 'Vienna',
-      url: 'https://www.imba.oeaw.ac.at/about-imba/careers/open-positions/', rss: null },
+      url: 'https://www.imba.oeaw.ac.at/research/careers/', rss: null },
     { org: 'CeMM Vienna', country: 'austria', location: 'Vienna',
       url: 'https://cemm.at/career/', rss: null },
     { org: 'Medical University of Vienna', country: 'austria', location: 'Vienna',
-      url: 'https://jobcenter.meduniwien.ac.at/en/open-positions/?search=immunology+molecular+biology', rss: null },
+      url: 'https://jobs.meduniwien.ac.at/en/open-positions/', rss: null },
     { org: 'University of Vienna', country: 'austria', location: 'Vienna',
-      url: 'https://jobcenter.univie.ac.at/en/jobs-and-vacancies/?search=immunology+cell+biology+molecular', rss: null },
+      url: 'https://jobcenter.univie.ac.at/en/jobs-and-vacancies/', rss: null },
+    { org: 'Austrian Academy of Sciences', country: 'austria', location: 'Vienna',
+      url: 'https://www.oeaw.ac.at/en/oeaw/jobs/', rss: null },
   ];
   for (const src of sources) {
     const html = await safeFetch(src.url, { referer: `https://${new URL(src.url).hostname}/` });
@@ -1871,7 +1891,7 @@ async function scrapeCanada() {
     { org: 'University of Toronto', country: 'canada', location: 'Toronto',
       url: 'https://jobs.utoronto.ca/search/?q=stem+cell+immunology+molecular+biology&climit=25', rss: null },
     { org: 'McGill University', country: 'canada', location: 'Montreal',
-      url: 'https://www.mcgill.ca/careers/academic?keywords=immunology+cell+biology+molecular', rss: null },
+      url: 'https://mcgill.ca/careers/postings?keywords=immunology+cell+biology+molecular+biology', rss: null },
     { org: 'University of British Columbia', country: 'canada', location: 'Vancouver',
       url: 'https://www.hr.ubc.ca/careers/?q=immunology+stem+cell+molecular+biology', rss: null },
     // Nature Careers Canada — leverages working source
@@ -1937,7 +1957,7 @@ async function scrapeAustralia() {
     { org: 'WEHI', country: 'australia', location: 'Melbourne',
       url: 'https://www.wehi.edu.au/careers/', rss: null },
     { org: 'Garvan Institute', country: 'australia', location: 'Sydney',
-      url: 'https://www.garvan.org.au/about-us/work-with-us', rss: null },
+      url: 'https://www.garvan.org.au/work-with-us/join-our-team', rss: null },
     { org: 'Monash University', country: 'australia', location: 'Melbourne',
       url: 'https://careers.pageuppeople.com/513/cw/en/listing/?search=immunology+stem+cell+molecular+biology', rss: null },
     // Nature Careers Australia
@@ -1971,10 +1991,10 @@ async function scrapeAllSources() {
   console.log('\n📡 Starting multi-source live scrape...\n');
 
   // Run all scrapers in parallel — failure of any one never breaks the rest
+  // NOTE: scrapeAcademicTransfer removed — returned 0 candidates in every run
   const [
     euraxessRaw,
     academicPosRaw,
-    academicTransferRaw,
     natureCareersRaw,
     findaPhdRaw,
     swedishRaw,
@@ -1993,7 +2013,6 @@ async function scrapeAllSources() {
   ] = await Promise.allSettled([
     scrapeEuraxess(),
     scrapeAcademicPositions(),
-    scrapeAcademicTransfer(),
     scrapeNatureCareers(),
     scrapeFindAPhD(),
     scrapeSwedishUniversities(),
@@ -2018,7 +2037,6 @@ async function scrapeAllSources() {
   const allRaw = [
     ...tagSource(euraxessRaw,        'euraxess',        'keyword'),
     ...tagSource(academicPosRaw,     'academicpos',     'keyword'),
-    ...tagSource(academicTransferRaw,'academictransfer','portal'),
     ...tagSource(natureCareersRaw,   'nature',          'keyword'),
     ...tagSource(findaPhdRaw,        'findaphd',        'keyword'),
     ...tagSource(swedishRaw,         'swedish',         'portal'),
@@ -2070,19 +2088,11 @@ async function scrapeAllSources() {
   const deduped = deduplicateJobs(scored);
   console.log(`🔄 After deduplication: ${deduped.length} unique live jobs`);
 
-  // Fix 6: Adaptive per-org cap.
-  // When we have plenty of jobs, cap tightly (3/org) to ensure diversity.
-  // When live yield is low (< 20), raise cap to 5 so we don't discard valid jobs
-  // from a good source just because it contributed more than 3.
-  const effectiveCap = scored.length < 20 ? 5 : MAX_JOBS_PER_ORG;
-  const orgCounts = {};
-  const capped = deduped.filter(job => {
-    const orgKey = (job.org || '').toLowerCase().trim();
-    orgCounts[orgKey] = (orgCounts[orgKey] || 0) + 1;
-    return orgCounts[orgKey] <= effectiveCap;
-  });
-  const cappedOut = deduped.length - capped.length;
-  if (cappedOut > 0) console.log(`🏛  Per-org cap (${effectiveCap}/org): removed ${cappedOut} lower-scoring duplicates`);
+  // No per-org cap — if a job passed scoring it is genuinely relevant.
+  // Karolinska may have 5 valid open positions simultaneously; all should show.
+  // The score threshold + title exclusions are the correct filter, not a cap.
+  const capped = deduped;
+  console.log(`✅ ${capped.length} unique live jobs ready to post`);
 
   // Remove internal fingerprint field before posting
   capped.forEach(j => { delete j._fp; delete j._source; delete j._sourceType; });
