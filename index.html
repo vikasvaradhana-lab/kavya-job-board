@@ -442,9 +442,9 @@ body::before {
   <div class="loader-ring"></div>
   <div class="loader-text">Searching for new opportunities…</div>
   <div class="loader-steps">
-    <div class="loader-step" id="step1">Scanning EURAXESS, Nature Careers & MSCA</div>
-    <div class="loader-step" id="step2">Checking university portals across Europe</div>
-    <div class="loader-step" id="step3">Matching to your profile & filtering</div>
+    <div class="loader-step" id="step1">Scanning EURAXESS, Nature Careers, MSCA & phdjobs.com</div>
+    <div class="loader-step" id="step2">Checking universities across Europe, Norway, Finland, Austria & beyond</div>
+    <div class="loader-step" id="step3">Matching to your profile, filtering postdocs & irrelevant roles</div>
     <div class="loader-step" id="step4">Merging new jobs with your existing board</div>
   </div>
 </div>
@@ -607,6 +607,8 @@ body::before {
   </div>
 </div>
 
+  <!-- Axios for API calls with timeout support -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.8/axios.min.js"></script>
 <script>
 // ─────────────────────────────────────────────
 // DATA STORE
@@ -960,12 +962,15 @@ function markAutoRefreshed() {
 
 function autoRefreshIfNeeded() {
   if (!shouldAutoRefresh()) return;
+  // Don't trigger if overlay already showing (e.g. manual refresh in progress)
+  const overlay = document.getElementById('loadingOverlay');
+  if (overlay && overlay.classList.contains('show')) return;
   markAutoRefreshed();
-  // Small delay so the board renders first, then silently refresh
+  // Delay so the board renders fully first
   setTimeout(() => {
     console.log('🔄 Auto-refreshing board (first load today)...');
     refreshJobs();
-  }, 1800);
+  }, 2000);
 }
 const PORTALS = {
   sweden: [
@@ -1187,55 +1192,54 @@ function refreshJobs() {
     return { removed };
   };
 
-  setTimeout(() => {
-    // Use axios.post with 120s timeout — scraper runs can take up to 2 minutes
-    axios.post(API_URL.replace('/api/jobs', '') + '/api/jobs/trigger', {}, { timeout: 120000 })
-      .catch(() => {}) // fire-and-forget trigger (if server supports it)
-      .finally(() => {});
+  // Safety net — if anything throws unexpectedly, always unlock the UI
+  const safeFinish = () => {
+    try { finishUI(); } catch(e) { 
+      overlay.classList.remove('show');
+      btn.disabled = false;
+      btn.classList.remove('loading');
+    }
+  };
 
-    fetch(API_URL, { signal: AbortSignal.timeout(120000) })
+  setTimeout(() => {
+    // Use axios.get with 120s timeout — scraper runs can take up to 2 minutes
+    axios.get(API_URL, { timeout: 120000 })
       .then(res => {
-        if (!res.ok) throw new Error('API returned ' + res.status);
-        return res.json();
-      })
-      .then(data => {
+        const data = res.data;
         // Normalise response: accept { jobs: [...] } or bare array
         const apiJobs = Array.isArray(data) ? data : (data.jobs || []);
 
         if (apiJobs.length === 0) {
-          // API responded but returned nothing — keep board as-is, clean expired
           const cleanup = sortAndSave();
-          finishUI();
+          safeFinish();
           showUpdatePopup(0, jobs.length, false, true, cleanup.removed);
           return;
         }
 
-        // Build a dedup map of existing jobs (prevent duplicates)
+        // Build a dedup map of existing jobs
         const existingKeys = new Map();
         jobs.forEach(j => existingKeys.set(jobKey(j), j));
 
-        // Find truly new jobs (not already on the board)
+        // Find truly new jobs
         const genuinelyNew = apiJobs
           .filter(j => !existingKeys.has(jobKey(j)))
           .map(j => ({
             ...j,
-            // Stamp dateFound with today if the scraper didn't set it
             dateFound: j.dateFound || j.fetchedAt || new Date().toISOString(),
           }));
 
-        // MERGE STRATEGY: existing jobs + new jobs (no aggressive deletion)
+        // MERGE: existing + new
         jobs = [...jobs, ...genuinelyNew];
 
         const cleanup = sortAndSave();
-        finishUI();
+        safeFinish();
         showUpdatePopup(genuinelyNew.length, jobs.length, false, false, cleanup.removed);
       })
       .catch(err => {
         console.error('API fetch failed — keeping existing board:', err);
-        // Network/API failure: preserve board, only clean expired
         if (jobs.length === 0) jobs = INITIAL_JOBS.slice();
         const cleanup = sortAndSave();
-        finishUI();
+        safeFinish();
         showUpdatePopup(0, jobs.length, true, false, cleanup.removed);
       });
   }, 2400);
