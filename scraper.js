@@ -48,6 +48,8 @@ const TITLE_DISCIPLINE_EXCLUDE = [
   'philosophy', 'sociology', 'anthropology', 'archaeology', 'history phd',
   'linguistics', 'literature phd', 'political science', 'economics phd',
   'islamic', 'theology', 'religious studies', 'cultural studies',
+  'health economics', 'hälsoekonomi', 'gesundheitsökonomie',
+  'epidemiology phd', 'public health phd', 'health policy',
   // Marine / ecology (unless biology-adjacent)
   'coral reef', 'marine ecology', 'fisheries', 'aquaculture phd',
   'forest ecology', 'plant ecology phd', 'entomology phd',
@@ -57,26 +59,26 @@ const TITLE_DISCIPLINE_EXCLUDE = [
 ];
 
 // Postdoc title exclusions — checked against TITLE ONLY (not description).
-// Covers all target language variants so native-language listings are caught.
-// A job titled "Postdoktor i spatial genomik" is correctly excluded even though
-// the description may mention stem cells, epigenetics etc.
 const POSTDOC_TITLE_EXCLUDE = [
   // English
   'postdoctoral', 'postdoc', 'post-doctoral', 'post-doc',
   'postdoctorate', 'post doctorate',
-  // Swedish / Danish / Norwegian
+  // Swedish — includes postdoc AND senior researcher variants above PhD
   'postdoktor', 'postdoktoral', 'postdoktorand', 'postdoktorandin',
+  'forskarassistent',   // Swedish: research assistant at postdoc level
+  'forskardoktor',      // Swedish: research doctor = postdoc
+  'biträdande forskare', // Swedish: associate researcher (postdoc equiv)
+  // Danish/Norwegian
+  'postdoktor', 'forsker',  // Note: forsker = researcher, often postdoc level
   // German
-  'postdoktorand', 'postdoktorandin', 'wissenschaftliche mitarbeiterin',
-  'wissenschaftlicher mitarbeiter',
+  'postdoktorand', 'postdoktorandin',
   // Dutch
   'postdoctoraal', 'postdoctorale',
   // French
   'postdoctorant', 'postdoctorante', 'chercheur postdoctoral',
-  'chercheuse postdoctorale',
   // Finnish
-  'tutkijatohtori',
-  // Italian / Spanish (for Austria/Belgium/Switzerland border labs)
+  'tutkijatohtori', 'yliopistotutkija', // yliopistotutkija = university researcher (postdoc)
+  // Italian / Spanish
   'postdottorato', 'investigador postdoctoral',
 ];
 
@@ -248,14 +250,18 @@ function resolveCountry(raw = '') {
 
 // ─── SCORING ENGINE ──────────────────────────────────────────────────────────
 
-// Fix 3 + Postdoc: Check title against off-discipline list AND multilingual postdoc list
+// Fix 3 + Postdoc + Senior: Check title against all exclusion lists
 function titleIsOffDiscipline(title = '') {
   const t = title.toLowerCase();
   for (const term of TITLE_DISCIPLINE_EXCLUDE) {
     if (t.includes(term)) return true;
   }
-  // Postdoc check — title-only so "PhD project mentioning postdoc career" is unaffected
+  // Postdoc check — title-only
   for (const term of POSTDOC_TITLE_EXCLUDE) {
+    if (t.includes(term)) return true;
+  }
+  // Senior/professor roles that require a completed PhD
+  for (const term of SENIOR_TITLE_EXCLUDE) {
     if (t.includes(term)) return true;
   }
   return false;
@@ -269,16 +275,21 @@ function scoreTitleAlone(title = '') {
   for (const excl of HARD_EXCLUDE) {
     if (t.includes(excl)) return -1;
   }
-  // Role type signals in title
-  if (/phd|doctoral/.test(t))                              s += 10;
+  // Multilingual PhD role signals in title (English + Nordic + German + Dutch)
+  const isPhdTitle = PHD_TITLE_TERMS.some(term => t.includes(term));
+  if (isPhdTitle) s += 12;
+  // English research role signals
   if (/research\s+(assistant|engineer|scientist|associate|technician)/i.test(t)) s += 10;
   if (/lab(oratory)?\s+(technician|assistant)/i.test(t))  s += 8;
   if (/junior\s+(scientist|researcher|associate)/i.test(t)) s += 8;
   if (/associate\s+scientist/i.test(t))                   s += 8;
   if (/marie\s+curie|msca/i.test(t))                      s += 14;
+  // Swedish research role signals (Forskningsassistent = Research Assistant)
+  if (/forskningsassistent|forskningsingenjör|laboratorieingenjör/i.test(t)) s += 10;
+  if (/projektassistent|laboratorieassistent/i.test(t))   s += 8;
   // Science / biology keywords in title
   for (const { kw, w } of STRONG_KEYWORDS) {
-    if (t.includes(kw)) s += Math.ceil(w * 0.6); // partial weight for title-only match
+    if (t.includes(kw)) s += Math.ceil(w * 0.6);
   }
   return s;
 }
@@ -319,26 +330,44 @@ function scoreJob(title = '', description = '') {
     score += 6;
   }
 
-  // PhD / role boosts
-  if (text.includes('phd') || text.includes('doctoral')) score += 14;
+  // PhD / role boosts — multilingual
+  const isPhdRole = PHD_TITLE_TERMS.some(term => text.includes(term));
+  if (isPhdRole) score += 14;
   if (text.includes('fully funded') || text.includes('marie curie') || text.includes('msca')) score += 18;
+  // English role boosts
   if (/research\s+(assistant|engineer|scientist|associate|technician)/i.test(text)) score += 10;
   if (/lab(oratory)?\s+(technician|assistant|manager)/i.test(text)) score += 8;
   if (/junior\s+(scientist|researcher|associate)/i.test(text)) score += 9;
   if (/early.career|graduate.programme|trainee|internship/i.test(text)) score += 6;
+  // Swedish/Nordic role boosts
+  if (/forskningsassistent|forskningsingenjör|laboratorieingenjör/i.test(text)) score += 10;
+  if (/projektassistent|laboratorieassistent/i.test(text)) score += 7;
+  // Nordic fully funded signals
+  if (/fullt finansierad|helfinansierad|stipendium/i.test(text)) score += 12;
 
-  // Strong keyword matches
+  // Strong keyword matches — with word-boundary guard for short terms (≤4 chars)
+  // Prevents 'esc' matching inside 'forskning', 'rna' inside Nordic compound words etc.
   for (const { kw, w } of STRONG_KEYWORDS) {
-    if (text.includes(kw)) score += w;
+    if (kw.length <= 4) {
+      const re = new RegExp(
+        `(?:^|[\\s\\-/,()])${kw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?:[\\s\\-/,.)]|$)`, 'i'
+      );
+      if (re.test(text)) score += w;
+    } else {
+      if (text.includes(kw)) score += w;
+    }
   }
 
   // Multi-keyword bonus
-  const matchCount = STRONG_KEYWORDS.filter(({ kw }) => text.includes(kw)).length;
+  const matchCount = STRONG_KEYWORDS.filter(({ kw }) =>
+    kw.length <= 4
+      ? new RegExp(`(?:^|[\\s\\-/,()])${kw}(?:[\\s\\-/,.)]|$)`, 'i').test(text)
+      : text.includes(kw)
+  ).length;
   if (matchCount >= 3) score += 8;
   if (matchCount >= 5) score += 6;
 
-  // Fix 4: Thin description penalty — if description was absent or too short,
-  // we're scoring on title alone; raise the effective bar.
+  // Thin description penalty
   if (!descIsReal) score -= 12;
 
   // Soft exclusion penalties
@@ -353,9 +382,63 @@ function tierFromScore(score) {
   return score >= 76 ? 'high' : score >= 58 ? 'medium' : 'stretch';
 }
 
+// Multilingual PhD role terms — if title contains any of these → type = 'phd'
+const PHD_TITLE_TERMS = [
+  // English
+  'phd', 'ph.d', 'doctoral', 'doctorate', 'phd student', 'phd position', 'phd candidate',
+  // Swedish
+  'doktorand', 'doktorandtjänst', 'doktorandprojekt',
+  // Danish
+  'ph.d.-studerende', 'ph.d.-stipendiat', 'ph.d. stipendiat', 'ph.d-studerende',
+  'phd-studerende', 'ph.d.', 'phd-stipendiat',
+  // Norwegian
+  'stipendiat', 'ph.d.-kandidat', 'doktorgradsstipendiat',
+  // German
+  'doktorand', 'doktorandin', 'promotionsstelle', 'promotionsstudent',
+  'wissenschaftliche hilfskraft', 'doktorarbeit',
+  // Dutch
+  'promovendus', 'promovenda', 'aio', 'phd-kandidaat', 'phd kandidaat',
+  // Finnish
+  'tohtorikoulutettava', 'väitöskirjatutkija', 'jatko-opiskelija',
+  // French
+  'doctorant', 'doctorante', 'thèse de doctorat',
+  // Italian / Spanish
+  'dottorando', 'doctorando',
+];
+
+// Multilingual senior/professor role terms — these require a completed PhD → exclude
+// Added to HARD_EXCLUDE logic via titleIsOffDiscipline for title-only check
+const SENIOR_TITLE_EXCLUDE = [
+  // Swedish senior academic roles
+  'universitetslektor', 'biträdande universitetslektor',
+  'universitets lektor', 'lektor', 'docent',
+  'professor', 'adjungerad professor', 'gästprofessor',
+  'föreståndare', 'avdelningschef', 'prefekt',
+  // Danish/Norwegian senior roles
+  'lektor', 'professor', 'amanuensis', 'førsteamanuensis',
+  'instituttleder', 'dekan',
+  // German senior roles
+  'professor', 'juniorprofessor', 'privatdozent', 'akademischer rat',
+  'gruppenleiter', 'abteilungsleiter',
+  // Dutch senior roles
+  'hoogleraar', 'universitair hoofddocent', 'universitair docent',
+  // Finnish senior roles
+  'professori', 'yliopistonlehtori', 'apulaisprofessori',
+  // French senior roles
+  'maître de conférences', 'professeur des universités',
+  // General (all languages)
+  'assistant professor', 'associate professor', 'full professor',
+  'group leader', 'department head', 'principal investigator',
+  'chair in', 'endowed chair',
+];
+
 function typeFromText(text) {
   const t = text.toLowerCase();
-  return (t.includes('phd') || t.includes('doctoral')) ? 'phd' : 'industry';
+  // Check PhD terms first
+  for (const term of PHD_TITLE_TERMS) {
+    if (t.includes(term)) return 'phd';
+  }
+  return 'industry';
 }
 
 // Stable dedup fingerprint (matches the frontend jobKey logic)
@@ -384,7 +467,10 @@ function buildJob(raw, source, sourceType = 'keyword') {
 
   if (score < threshold) return null;
 
-  const country = resolveCountry(raw.country);
+  // Country resolution: prefer explicitly set country from scraper context (_forcedCountry)
+  // over the resolved raw.country which may default to 'sweden' when unknown.
+  // This ensures Norway/Finland/Austria/Canada/Singapore/Australia jobs are correctly tagged.
+  const country = raw._forcedCountry || resolveCountry(raw.country);
   const type    = raw.type || typeFromText(raw.title + ' ' + (raw.description || ''));
   const tier    = tierFromScore(score);
 
@@ -425,20 +511,24 @@ function buildJob(raw, source, sourceType = 'keyword') {
 function buildTags(title, org, country, location) {
   const tags = [];
   const t = (title + '').toLowerCase();
-  if (t.includes('phd') || t.includes('doctoral')) tags.push('🎓 PhD');
+  // Use multilingual PhD detection for tag
+  const isPhd = PHD_TITLE_TERMS.some(term => t.includes(term));
+  if (isPhd) tags.push('🎓 PhD');
   else tags.push('🏢 Industry');
   if (location) tags.push(`📍 ${location}`);
   else {
     const cityMap = {
       sweden: 'Sweden', netherlands: 'Netherlands', denmark: 'Denmark',
-      germany: 'Germany', belgium: 'Belgium', switzerland: 'Switzerland', luxembourg: 'Luxembourg'
+      germany: 'Germany', belgium: 'Belgium', switzerland: 'Switzerland',
+      luxembourg: 'Luxembourg', norway: 'Norway', finland: 'Finland',
+      austria: 'Austria', canada: 'Canada', singapore: 'Singapore', australia: 'Australia',
     };
     tags.push(`📍 ${cityMap[country] || country}`);
   }
   if (t.includes('marie curie') || t.includes('msca')) tags.push('MSCA · Fully Funded');
-  else if (t.includes('fully funded')) tags.push('Fully Funded');
-  if (t.includes('stem cell')) tags.push('Stem Cells');
-  if (t.includes('immunology') || t.includes('immun')) tags.push('Immunology');
+  else if (t.includes('fully funded') || t.includes('fullt finansierad') || t.includes('helfinansierad')) tags.push('Fully Funded');
+  if (t.includes('stem cell') || t.includes('stamcell')) tags.push('Stem Cells');
+  if (t.includes('immunology') || t.includes('immunologi') || t.includes('immunonkologi')) tags.push('Immunology');
   if (t.includes('epigeneti')) tags.push('Epigenetics');
   return tags.slice(0, 5);
 }
@@ -2030,8 +2120,14 @@ async function scrapeAllSources() {
     scrapeAustralia(),
   ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : []));
 
-  function tagSource(arr, source, sourceType = 'keyword') {
-    return arr.map(j => ({ ...j, _source: source, _sourceType: sourceType }));
+  function tagSource(arr, source, sourceType = 'keyword', forcedCountry = null) {
+    return arr.map(j => ({
+      ...j,
+      _source: source,
+      _sourceType: sourceType,
+      // Force country for country-specific scrapers so jobs don't default to 'sweden'
+      ...(forcedCountry ? { _forcedCountry: forcedCountry } : {}),
+    }));
   }
 
   const allRaw = [
@@ -2046,12 +2142,12 @@ async function scrapeAllSources() {
     ...tagSource(restEuropeRaw,      'resteurope',      'portal'),
     ...tagSource(novoRaw,            'novo',            'keyword'),
     ...tagSource(industryRaw,        'industry',        'keyword'),
-    ...tagSource(norwayRaw,          'norway',          'portal'),
-    ...tagSource(finlandRaw,         'finland',         'portal'),
-    ...tagSource(austriaRaw,         'austria',         'portal'),
-    ...tagSource(canadaRaw,          'canada',          'keyword'),
-    ...tagSource(singaporeRaw,       'singapore',       'keyword'),
-    ...tagSource(australiaRaw,       'australia',       'keyword'),
+    ...tagSource(norwayRaw,          'norway',          'portal',   'norway'),
+    ...tagSource(finlandRaw,         'finland',         'portal',   'finland'),
+    ...tagSource(austriaRaw,         'austria',         'portal',   'austria'),
+    ...tagSource(canadaRaw,          'canada',          'keyword',  'canada'),
+    ...tagSource(singaporeRaw,       'singapore',       'keyword',  'singapore'),
+    ...tagSource(australiaRaw,       'australia',       'keyword',  'australia'),
   ];
 
   await closeBrowser();

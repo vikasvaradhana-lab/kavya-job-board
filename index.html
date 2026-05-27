@@ -186,7 +186,9 @@ body::before {
 .fbtn.on.gold { background: var(--gold); border-color: var(--gold); }
 .fbtn.on.rose { background: var(--rose); border-color: var(--rose); }
 .fbtn.on.blue { background: var(--accent2); border-color: var(--accent2); }
-.ctrl-sep { width: 1px; height: 20px; background: var(--border2); margin: 0 4px; }
+/* Uppsala-only button — distinct gold colour */
+.Uppsala-btn { border-color: var(--gold) !important; color: var(--gold) !important; }
+.Uppsala-btn.on { background: var(--gold) !important; color: #000 !important; font-weight: 700; }
 
 /* ─── SORT DROPDOWN ─── */
 .sort-select {
@@ -536,6 +538,8 @@ body::before {
     <button class="fbtn" id="fb-ind" onclick="setFilter('industry',this)">🏢 Industry</button>
     <div class="ctrl-sep"></div>
     <button class="fbtn" id="fb-app" onclick="setFilter('status-applied',this)" data-cls="blue">✓ Applied</button>
+    <div class="ctrl-sep"></div>
+    <button class="fbtn Uppsala-btn" id="fb-uppsala" onclick="setUppsalaFilter(this)" title="Show only Uppsala University positions">🎓 Uppsala</button>
 
     <label class="hide-toggle">
       <input type="checkbox" id="hideProcessed" onchange="toggleHideProcessed(this.checked)">
@@ -702,7 +706,8 @@ let statuses = loadStatuses(); // { jobId: 'applied'|'rejected'|'closed'|'none' 
 let currentFilter = 'all';
 let currentCountry = 'sweden';
 let hideProcessed = false;
-let currentSort = 'best-match'; // default sort order
+let currentSort = 'best-match';
+let uppsalaOnly = false; // Uppsala-only filter mode
 
 // ─────────────────────────────────────────────
 // DATE / FRESHNESS HELPERS
@@ -789,6 +794,21 @@ function applySort(jobArr) {
 function setSort(value) {
   currentSort = value;
   renderAll();
+}
+
+// Uppsala-only filter — overrides country and type filters to show only UU jobs
+function setUppsalaFilter(btn) {
+  uppsalaOnly = !uppsalaOnly;
+  btn.classList.toggle('on', uppsalaOnly);
+  // Deactivate all other filter buttons when Uppsala mode is on
+  if (uppsalaOnly) {
+    document.querySelectorAll('.fbtn:not(#fb-uppsala)').forEach(b => b.classList.remove('on'));
+    currentFilter = 'all'; // reset type filter
+  } else {
+    // Restore "All" button as active when leaving Uppsala mode
+    document.getElementById('fb-all').classList.add('on');
+  }
+  applyFilter();
 }
 
 // ─────────────────────────────────────────────
@@ -885,6 +905,9 @@ function updateStatCounts() {
 // FILTER
 // ─────────────────────────────────────────────
 function setFilter(f, btn) {
+  uppsalaOnly = false;
+  const uBtn = document.getElementById('fb-uppsala');
+  if (uBtn) uBtn.classList.remove('on');
   currentFilter = f;
   document.querySelectorAll('.fbtn').forEach(b => b.classList.remove('on'));
   btn.classList.add('on');
@@ -894,6 +917,9 @@ function setFilter(f, btn) {
 }
 
 function setCountry(c) {
+  uppsalaOnly = false;
+  const uBtn = document.getElementById('fb-uppsala');
+  if (uBtn) uBtn.classList.remove('on');
   currentCountry = c;
   applyFilter();
 }
@@ -909,15 +935,23 @@ function applyFilter() {
   cards.forEach(card => {
     let show = true;
 
-    if (card.dataset.country !== currentCountry) show = false;
+    if (uppsalaOnly) {
+      // Uppsala mode: show only Uppsala University cards regardless of country/type
+      const orgEl = card.querySelector('.card-org');
+      const orgText = (orgEl ? orgEl.textContent : '').toLowerCase();
+      show = orgText.includes('uppsala');
+    } else {
+      // Normal mode: country + type filter
+      if (card.dataset.country !== currentCountry) show = false;
 
-    if (show && currentFilter !== 'all') {
-      show = card.classList.contains(currentFilter);
-    }
+      if (show && currentFilter !== 'all') {
+        show = card.classList.contains(currentFilter);
+      }
 
-    if (show && hideProcessed) {
-      const s = card.dataset.status;
-      if (s === 'applied' || s === 'rejected' || s === 'closed') show = false;
+      if (show && hideProcessed) {
+        const s = card.dataset.status;
+        if (s === 'applied' || s === 'rejected' || s === 'closed') show = false;
+      }
     }
 
     card.classList.toggle('hidden-card', !show);
@@ -928,7 +962,6 @@ function applyFilter() {
   );
   document.getElementById('statVisible').textContent = visibleCards.length;
 
-  // Show/hide tier headers
   ['high','medium','stretch'].forEach(tier => {
     const gridId = tier === 'high' ? 'grid-high' : tier === 'medium' ? 'grid-med' : 'grid-str';
     const hdId   = tier === 'high' ? 'hd-high'   : tier === 'medium' ? 'hd-med'   : 'hd-str';
