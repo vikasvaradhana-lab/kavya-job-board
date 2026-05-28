@@ -190,6 +190,83 @@ body::before {
 .Uppsala-btn { border-color: var(--gold) !important; color: var(--gold) !important; }
 .Uppsala-btn.on { background: var(--gold) !important; color: #000 !important; font-weight: 700; }
 
+/* Save / Pin button */
+.save-btn {
+  background: none; border: 1px solid var(--border2); color: var(--muted);
+  border-radius: 5px; padding: 4px 9px; font-size: 11px; cursor: pointer;
+  transition: all 0.15s; font-family: 'Outfit', sans-serif;
+}
+.save-btn:hover { border-color: var(--gold); color: var(--gold); }
+.save-btn.saved { border-color: var(--gold); color: var(--gold); background: rgba(245,200,66,0.08); }
+
+/* Not For Me button */
+.nfm-btn {
+  background: none; border: 1px solid var(--border2); color: var(--muted);
+  border-radius: 5px; padding: 4px 9px; font-size: 11px; cursor: pointer;
+  transition: all 0.15s; font-family: 'Outfit', sans-serif;
+}
+.nfm-btn:hover { border-color: #e74c3c; color: #e74c3c; }
+
+/* Not For Me modal */
+.nfm-modal-backdrop {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  z-index: 2000; align-items: center; justify-content: center;
+}
+.nfm-modal-backdrop.show { display: flex; }
+.nfm-modal {
+  background: var(--surface); border: 1px solid var(--border2); border-radius: 14px;
+  padding: 28px 32px; max-width: 600px; width: 90%; max-height: 80vh;
+  overflow-y: auto; position: relative;
+}
+.nfm-modal-title {
+  font-family: 'Playfair Display', serif; font-size: 20px; color: var(--text);
+  margin-bottom: 6px;
+}
+.nfm-modal-sub { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+.nfm-entry {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid var(--border2);
+}
+.nfm-entry-info { flex: 1; min-width: 0; }
+.nfm-entry-title { font-size: 13px; color: var(--text); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nfm-entry-org   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.nfm-entry-date  { font-size: 10px; color: var(--muted); flex-shrink: 0; }
+.nfm-restore-btn {
+  background: none; border: 1px solid var(--accent); color: var(--accent);
+  border-radius: 5px; padding: 3px 10px; font-size: 11px; cursor: pointer;
+  font-family: 'Outfit', sans-serif; flex-shrink: 0; transition: all 0.15s;
+}
+.nfm-restore-btn:hover { background: rgba(78,204,163,0.1); }
+.nfm-modal-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 30px 0; }
+.nfm-modal-footer { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+.nfm-clear-all-btn {
+  background: rgba(231,76,60,0.1); border: 1px solid #e74c3c; color: #e74c3c;
+  border-radius: 6px; padding: 6px 16px; font-size: 12px; cursor: pointer;
+  font-family: 'Outfit', sans-serif;
+}
+.nfm-close-btn {
+  background: var(--border2); border: none; color: var(--text);
+  border-radius: 6px; padding: 6px 16px; font-size: 12px; cursor: pointer;
+  font-family: 'Outfit', sans-serif;
+}
+
+/* Pinned badge on saved cards */
+.pinned-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
+  background: rgba(245,200,66,0.12); color: var(--gold);
+  border: 1px solid rgba(245,200,66,0.3); text-transform: uppercase; letter-spacing: 0.4px;
+}
+
+/* Clear & Refresh button */
+.clear-refresh-btn {
+  background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.4);
+  color: #e74c3c; border-radius: 7px; padding: 7px 14px; font-size: 12px;
+  cursor: pointer; font-family: 'Outfit', sans-serif; font-weight: 600;
+  transition: all 0.15s;
+}
+.clear-refresh-btn:hover { background: rgba(231,76,60,0.2); }
+
 /* ─── SORT DROPDOWN ─── */
 .sort-select {
   padding: 6px 12px;
@@ -424,6 +501,19 @@ body::before {
 </head>
 <body>
 
+<!-- Not For Me Modal -->
+<div class="nfm-modal-backdrop" id="nfmModal">
+  <div class="nfm-modal">
+    <div class="nfm-modal-title">✕ Not For Me</div>
+    <div class="nfm-modal-sub">These positions are permanently hidden. Restore any to bring it back.</div>
+    <div id="nfmList"></div>
+    <div class="nfm-modal-footer">
+      <button class="nfm-clear-all-btn" onclick="clearAllNFM()">Clear All</button>
+      <button class="nfm-close-btn" onclick="closeNFMModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Portal Links Modal -->
 <div class="modal-bg" id="apiModal">
   <div class="modal">
@@ -540,6 +630,12 @@ body::before {
     <button class="fbtn" id="fb-app" onclick="setFilter('status-applied',this)" data-cls="blue">✓ Applied</button>
     <div class="ctrl-sep"></div>
     <button class="fbtn Uppsala-btn" id="fb-uppsala" onclick="setUppsalaFilter(this)" title="Show only Uppsala University positions">🎓 Uppsala</button>
+    <div class="ctrl-sep"></div>
+    <button class="fbtn" id="fb-saved" onclick="setSavedFilter(this)" title="Show only saved/pinned jobs">📌 Saved</button>
+    <div class="ctrl-sep"></div>
+    <button class="fbtn" onclick="openNFMModal()" title="View dismissed jobs" style="color:var(--muted)">✕ Not For Me</button>
+    <div class="ctrl-sep"></div>
+    <button class="clear-refresh-btn" onclick="clearAndRefresh()" title="Clear all jobs and fetch fresh from server">🗑 Clear & Refresh</button>
 
     <label class="hide-toggle">
       <input type="checkbox" id="hideProcessed" onchange="toggleHideProcessed(this.checked)">
@@ -580,7 +676,7 @@ body::before {
 
   <div class="empty-state" id="emptyState">
     <h3>No positions match this filter</h3>
-    <p>Try a different filter or click "Refresh Jobs" to fetch new listings.</p>
+    <p id="emptyMsg">Click <strong>Refresh Board</strong> to fetch live job listings.</p>
   </div>
 
   <div class="footer-note" id="footerNote">
@@ -617,19 +713,21 @@ body::before {
 // ─────────────────────────────────────────────
 // DATA STORE
 // ─────────────────────────────────────────────
-const STORAGE_KEY = 'kavya_job_statuses_v2';
-const UPDATE_KEY  = 'kavya_last_update';
-const JOBS_KEY    = 'kavya_jobs_v3'; // persists merged job board across sessions
+const STORAGE_KEY    = 'kavya_job_statuses_v2';
+const UPDATE_KEY     = 'kavya_last_update';
+const JOBS_KEY       = 'kavya_jobs_v4';        // live scraped jobs only
+const SAVED_KEY      = 'kavya_saved_jobs_v1';  // pinned/saved jobs (survive clear)
+const NFM_KEY        = 'kavya_not_for_me_v1';  // Not For Me fingerprints + metadata
+const AUTO_REFRESH_KEY = 'kavya_last_auto_refresh';
 
+// ── Storage helpers ──
 function loadStatuses() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
 }
 function saveStatuses(s) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
 }
-function loadLastUpdate() {
-  return localStorage.getItem(UPDATE_KEY) || null;
-}
+function loadLastUpdate() { return localStorage.getItem(UPDATE_KEY) || null; }
 function saveLastUpdate() {
   const d = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   localStorage.setItem(UPDATE_KEY, d);
@@ -647,67 +745,43 @@ function savePersistedJobs(jobArr) {
   try { localStorage.setItem(JOBS_KEY, JSON.stringify(jobArr)); } catch {}
 }
 
-// ─────────────────────────────────────────────
-// INITIAL JOB DATA (fallback / first load)
-// ─────────────────────────────────────────────
-const INITIAL_JOBS = [
-  // --- SWEDEN --- (dateFound = date this was curated into the board)
-  { id:'uu-epitox-phd', country:'sweden', tier:'high', type:'phd', org:'Uppsala University', score:97, title:'PhD Student — Circadian Epigenomics (EpiTox Group)', tags:['📍 Uppsala','PhD','DNA methylation','CRISPR','R/Python'], why:'Your supervisor Prof. Joëlle Rüegg directly references you. Your thesis on BPA/BPF in ESC models is a near-perfect match. Final-round shortlisted candidate.', deadline:'⚠️ Contact Prof. Rüegg directly for next round', deadlineWarn:true, url:'https://uu.varbi.com/en/what:job/jobID:882593', dateFound: new Date(Date.now() - 2*24*60*60*1000).toISOString() },
-  { id:'lund-immunomicro-phd', country:'sweden', tier:'high', type:'phd', org:'Lund University', score:91, title:'PhD Student — Immunology & Microbiology (Host-Microbe Interaction)', tags:['📍 Lund','PhD','Barrier Immunity','Start Jun 2026'], why:'Directly matches your M.Sc. in Immunology & Microbiology. Interviews in May 2026 at Lund — apply immediately.', deadline:'📅 Interviews underway — urgent!', deadlineWarn:true, url:'https://jobrxiv.org/job/doctoral-student-in-immunology-and-microbiology/', dateFound: new Date(Date.now() - 1*24*60*60*1000).toISOString() },
-  { id:'lund-rampup', country:'sweden', tier:'high', type:'phd', org:'Lund Stem Cell Center', score:89, title:'PhD — RAMP-UP Programme (Regenerative Medicine & ATMPs)', tags:['📍 Lund','PhD · 21 spots','EU MSCA COFUND','Stem Cells'], why:'Up to 21 fully funded PhD spots in regenerative medicine. Your ESC culture, cell differentiation and GLP experience are exactly what ATMP research demands.', deadline:'📅 Open — check for deadline', deadlineWarn:false, url:'https://www.stemcellcenter.lu.se/open-positions', dateFound: new Date(Date.now() - 5*24*60*60*1000).toISOString() },
-  { id:'ki-meletis', country:'sweden', tier:'high', type:'industry', org:'Karolinska Institutet', score:87, title:'Research Assistant — Neuroscience (Meletis Lab)', tags:['📍 Stockholm','Research Staff','Molecular neuroscience','qPCR'], why:'Investigating molecular identity of neuron subtypes — directly overlaps your SH-SY5Y glutamatergic neuron differentiation project.', deadline:'📅 Rolling — check KI vacancies', deadlineWarn:false, url:'https://ki.se/en/vacancies', dateFound: new Date(Date.now() - 12*24*60*60*1000).toISOString() },
-  { id:'scilifelab-re', country:'sweden', tier:'high', type:'industry', org:'SciLifeLab / KTH', score:85, title:'Research Engineer — Molecular Biology (RNA Handling, qPCR, NGS Prep)', tags:['📍 Stockholm/Uppsala','Research Engineer','SciLifeLab','RNA/PCR'], why:'Requires library prep, RNA handling, PCR — all directly in your toolkit. Posted through affiliated universities (KTH, UU, KI).', deadline:'📅 Continuous postings', deadlineWarn:false, url:'https://www.scilifelab.se/careers/', dateFound: new Date(Date.now() - 20*24*60*60*1000).toISOString() },
-  { id:'ki-mucosal', country:'sweden', tier:'high', type:'phd', org:'Karolinska Institutet', score:84, title:'PhD Student — Intestinal Mucosal Immunology', tags:['📍 Stockholm','PhD','Mucosal immunity','Caco-2 cells'], why:'Your Caco-2 intestinal epithelial cell culture experience is directly relevant. Your immunology MSc provides the academic baseline.', deadline:'📅 Check KI doctoral positions', deadlineWarn:false, url:'https://education.ki.se/doctoral-education/available-positions-for-doctoral-education', dateFound: new Date(Date.now() - 18*24*60*60*1000).toISOString() },
-  { id:'az-placement', country:'sweden', tier:'high', type:'industry', org:'AstraZeneca Sweden', score:83, title:'Work Placement Student — Bioscience / In Vivo (Sweden)', tags:['📍 Gothenburg','Early Career','Bioscience','Cell assays'], why:'AZ Sweden explicitly hires MSc-level placement students in Bioscience and In Vivo. Cell culture + assay experience aligns well. Gateway into pharma.', deadline:'📅 Annual intake — apply now', deadlineWarn:false, url:'https://careers.astrazeneca.com/work-placement-students-se', dateFound: new Date(Date.now() - 25*24*60*60*1000).toISOString() },
-  { id:'ki-lab-tech', country:'sweden', tier:'high', type:'industry', org:'Karolinska Institutet', score:82, title:'Lab Technician / Research Engineer — Shared (Lund & Talbot Labs)', tags:['📍 Stockholm','Lab Staff','qPCR · ELISA','Immunology'], why:'Joint lab technician across two KI immunology labs — matches your qPCR, ELISA, immunofluorescence, and safety compliance background.', deadline:'📅 Check KI vacancies portal', deadlineWarn:false, url:'https://ki.se/en/vacancies', dateFound: new Date(Date.now() - 30*24*60*60*1000).toISOString() },
-  { id:'ki-skeletal', country:'sweden', tier:'medium', type:'phd', org:'Karolinska Institutet', score:79, title:'PhD Student — Skeletal Biology & Immunology', tags:['📍 Stockholm','PhD','Cell biology','Molecular biology'], why:'Requires standard molecular biology and cell biology techniques you have. Immunology background is a direct qualifier.', deadline:'📅 Check KI doctoral positions', deadlineWarn:false, url:'https://education.ki.se/doctoral-education/available-positions-for-doctoral-education', dateFound: new Date(Date.now() - 22*24*60*60*1000).toISOString() },
-  { id:'tfs-associate', country:'sweden', tier:'medium', type:'industry', org:'Thermo Fisher Scientific', score:76, title:'Associate Scientist — Life Sciences (Sweden)', tags:['📍 Stockholm/Uppsala','Industry','qPCR · ELISA · PCR','GLP'], why:'Thermo Fisher Sweden hires MSc-level associates for lab support, QC, and R&D. Your GLP compliance and molecular biology toolkit are directly relevant.', deadline:'📅 Rolling applications', deadlineWarn:false, url:'https://jobs.thermofisher.com/global/en/sweden-jobs', dateFound: new Date(Date.now() - 28*24*60*60*1000).toISOString() },
-  { id:'uu-neurodegen', country:'sweden', tier:'medium', type:'phd', org:'Uppsala University', score:75, title:'PhD Student — Neurodevelopment & Neurodegeneration (Organismal Biology)', tags:['📍 Uppsala','PhD','Neurodegeneration','ESC models'], why:'Multiple UU Dept. of Organismal Biology groups run relevant projects. Your connections through Elena Jazin\'s lab are a significant advantage.', deadline:'📅 Check UU jobs portal', deadlineWarn:false, url:'https://academicpositions.com/jobs/employer/uppsala-university/position/phd', dateFound: new Date(Date.now() - 10*24*60*60*1000).toISOString() },
-  { id:'bioarctic', country:'sweden', tier:'medium', type:'industry', org:'BioArctic AB', score:74, title:'Research Associate / Junior Scientist — Neurodegeneration', tags:['📍 Stockholm','Industry · Biotech','Neuroscience','Cell assays'], why:'BioArctic focuses on Alzheimer\'s drug development. Your SH-SY5Y neuronal models + toxicology experience aligns with their preclinical work.', deadline:'📅 Check BioArctic careers', deadlineWarn:false, url:'https://careers.bioarctic.com/', dateFound: new Date(Date.now() - 35*24*60*60*1000).toISOString() },
-  { id:'northx', country:'sweden', tier:'medium', type:'industry', org:'NorthX Biologics', score:72, title:'QC / Cell Therapy Scientist (ATMP Space)', tags:['📍 Sundsvall','Industry · ATMP','Cell therapy QC','GLP'], why:'Requires cell biology and QC experience in ATMP/cell therapy — your GLP QA/QC background and mammalian cell culture are strong differentiators.', deadline:'📅 Check company site', deadlineWarn:false, url:'https://www.glassdoor.com/Job/sweden-cell-culture-jobs-SRCH_IL.0,6_IN223_KO7,19.htm', dateFound: new Date(Date.now() - 40*24*60*60*1000).toISOString() },
-  { id:'liu-multiomics', country:'sweden', tier:'medium', type:'phd', org:'Linköping University', score:70, title:'PhD — Digital Molecular Medicine (Multi-omics / Biomarkers)', tags:['📍 Linköping','PhD · 4 years','Multi-omics','R / Python'], why:'Three funded PhD spots. Requires ML for multi-omics — your R skills and sequencing data interpretation provide a base. Start Oct 2026.', deadline:'📅 Start Oct 2026 — apply soon', deadlineWarn:true, url:'https://academicpositions.com/jobs/position/phd/country/sweden', dateFound: new Date(Date.now() - 6*24*60*60*1000).toISOString() },
-  { id:'tfs-grad', country:'sweden', tier:'medium', type:'industry', org:'Thermo Fisher Scientific', score:69, title:'Early Career Graduate Program — Life Sciences', tags:['📍 Europe (multiple)','Graduate Program','Rotational'], why:'Thermo Fisher\'s early career program targets MSc graduates for rotational roles across R&D, QC, and applications. Pan-European opportunity.', deadline:'📅 Annual intake', deadlineWarn:false, url:'https://jobs.thermofisher.com/global/en/early-career-opportunities', dateFound: new Date(Date.now() - 45*24*60*60*1000).toISOString() },
-  { id:'su-envtox', country:'sweden', tier:'medium', type:'phd', org:'Stockholm University', score:67, title:'PhD Student — Environmental / Molecular Toxicology', tags:['📍 Stockholm','PhD','Environmental toxicology','Genomics'], why:'Your BPA/BPF endocrine disruptor thesis work is excellent background. Stockholm University has relevant programs through phdscanner.', deadline:'📅 Rolling — check PHDscanner', deadlineWarn:false, url:'https://www.phdscanner.com/phd-vacancies/standard/Sweden', dateFound: new Date(Date.now() - 50*24*60*60*1000).toISOString() },
-  { id:'ki-nk-phd', country:'sweden', tier:'stretch', type:'phd', org:'Karolinska Institutet', score:63, title:'PhD — NK Cell Immune Surveillance in Solid Cancers', tags:['📍 Stockholm','PhD · Funded','Cancer immunology','Translational'], why:'Highly competitive cancer immunology project. Your immunology MSc qualifies you, but competition from cancer biology specialists is strong. Compelling cover letter is critical.', deadline:'📅 Check KI doctoral positions', deadlineWarn:false, url:'https://academicpositions.com/jobs/employer/karolinska-institutet/position/phd', dateFound: new Date(Date.now() - 55*24*60*60*1000).toISOString() },
-  { id:'az-assoc', country:'sweden', tier:'stretch', type:'industry', org:'AstraZeneca R&D', score:61, title:'Associate Scientist — Oncology / Bioscience R&D', tags:['📍 Gothenburg','Industry · R&D','Cell assays','Drug discovery'], why:'AZ typically prefers 2+ years of industry experience for associate roles. Your academic profile + QA background is compelling but needs tailored positioning.', deadline:'📅 Rolling — AZ careers portal', deadlineWarn:false, url:'https://careers.astrazeneca.com/search-jobs', dateFound: new Date(Date.now() - 60*24*60*60*1000).toISOString() },
-  { id:'msca-phd', country:'sweden', tier:'stretch', type:'phd', org:'Multiple EU Universities', score:60, title:'Marie Skłodowska-Curie PhD — Molecular Life Sciences (EU-wide)', tags:['📍 Europe (Multiple)','MSCA · Fully Funded','Interdisciplinary','International mobility'], why:'MSCA positions are extremely competitive but highly prestigious. Your international profile, Uppsala affiliation, and cross-disciplinary skills are assets.', deadline:'📅 Check Academic Positions for open calls', deadlineWarn:false, url:'https://academicpositions.com/jobs/position/phd/field/immunology', dateFound: new Date(Date.now() - 65*24*60*60*1000).toISOString() },
-  { id:'anocca', country:'sweden', tier:'stretch', type:'industry', org:'Anocca AB', score:58, title:'Cell Therapy / Immunology Research Associate', tags:['📍 Solna, Stockholm','Biotech · Cell Therapy','Immunology','ATMP'], why:'T-cell therapy biotech. Prefers cell engineering/lentiviral experience. Your immunology + cell culture background qualifies partially — needs targeted application.', deadline:'📅 Check company site', deadlineWarn:false, url:'https://careers.bioarctic.com/', dateFound: new Date(Date.now() - 70*24*60*60*1000).toISOString() },
-  { id:'chalmers-ddcmb', country:'sweden', tier:'stretch', type:'phd', org:'Chalmers University', score:56, title:'PhD — Data-Driven Cell & Molecular Biology', tags:['📍 Gothenburg','PhD','Computational Biology','ML / R'], why:'Heavy computational/ML component. Your R skills are a foundation, but you\'d need to emphasize upskilling in machine learning. Worth taking if interested in data-driven biology.', deadline:'📅 Check Chalmers jobs', deadlineWarn:false, url:'https://academicpositions.com/jobs/position/phd/country/sweden', dateFound: new Date(Date.now() - 75*24*60*60*1000).toISOString() },
-  { id:'revvity-apps', country:'sweden', tier:'stretch', type:'industry', org:'Revvity / PerkinElmer', score:55, title:'Applications Scientist — Life Science Instruments', tags:['📍 Stockholm','Industry · Sales/Science','Flow cytometry','Imaging'], why:'Requires technical depth + customer-facing skills. Your lab experience + teaching assistant background (training 20+ students) makes you surprisingly competitive here.', deadline:'📅 Check Revvity / Glassdoor Sweden', deadlineWarn:false, url:'https://www.glassdoor.com/Job/sweden-biotech-jobs-SRCH_IL.0,6_IN223_KO7,14.htm', dateFound: new Date(Date.now() - 80*24*60*60*1000).toISOString() },
+// ── Saved (pinned) jobs ──
+function loadSavedJobs() {
+  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); } catch { return []; }
+}
+function saveSavedJobs(arr) {
+  try { localStorage.setItem(SAVED_KEY, JSON.stringify(arr)); } catch {}
+}
 
-  // --- NETHERLANDS ---
-  { id:'nl-leiden-phd', country:'netherlands', tier:'high', type:'phd', org:'Leiden University', score:92, title:'PhD — Molecular Immunology & Cancer Therapy', tags:['📍 Leiden','PhD','Immunotherapy','T-cells'], why:'Perfect match for your MSc. Leiden is a global hub for immunology research.', deadline:'📅 Apply by 15 June', deadlineWarn:true, url:'https://www.universiteitleiden.nl/en/vacancies', dateFound: new Date(Date.now() - 3*24*60*60*1000).toISOString() },
-  { id:'nl-amsterdam-sci', country:'netherlands', tier:'medium', type:'industry', org:'Amsterdam UMC', score:78, title:'Associate Scientist — Stem Cell Research', tags:['📍 Amsterdam','Industry','Stem Cells','RT-qPCR'], why:'Your SH-SY5Y and ESC experience makes you a top candidate here.', deadline:'📅 Rolling', deadlineWarn:false, url:'https://www.werkenbijamsterdamumc.nl/', dateFound: new Date(Date.now() - 15*24*60*60*1000).toISOString() },
-
-  // --- DENMARK ---
-  { id:'dk-cph-stem', country:'denmark', tier:'high', type:'phd', org:'University of Copenhagen', score:94, title:'PhD — Stem Cell Biology (DanStem)', tags:['📍 Copenhagen','PhD','Pluripotency','Epigenetics'], why:'Directly aligns with your thesis work on ESCs and epigenetics.', deadline:'📅 20 June 2026', deadlineWarn:true, url:'https://danstem.ku.dk/join-us/jobs_and_vacancies/', dateFound: new Date(Date.now() - 4*24*60*60*1000).toISOString() },
-  { id:'dk-novo-grad', country:'denmark', tier:'medium', type:'industry', org:'Novo Nordisk', score:75, title:'Graduate Programme — R&D Life Sciences', tags:['📍 Bagsværd','Graduate','R&D','Pharma'], why:'Prestigious entry point into industry. Your GLP background is highly valued.', deadline:'📅 Check Novo Nordisk site', deadlineWarn:false, url:'https://www.novonordisk.com/careers/early-talent/graduate-programme.html', dateFound: new Date(Date.now() - 30*24*60*60*1000).toISOString() },
-
-  // --- GERMANY ---
-  { id:'de-embl-phd', country:'germany', tier:'high', type:'phd', org:'EMBL Heidelberg', score:95, title:'PhD — Molecular Systems Biology & Epigenomics', tags:['📍 Heidelberg','PhD','Epigenetics','NGS'], why:'World-class research environment. Your molecular toolkit is a perfect fit.', deadline:'📅 Rolling calls', deadlineWarn:false, url:'https://www.embl.org/jobs/eipp/', dateFound: new Date(Date.now() - 8*24*60*60*1000).toISOString() },
-  { id:'de-bayer-sci', country:'germany', tier:'medium', type:'industry', org:'Bayer AG', score:72, title:'Research Associate — Toxicology & Safety', tags:['📍 Berlin','Industry','Toxicology','In vitro'], why:'Directly matches your neurotoxicology background.', deadline:'📅 Apply now', deadlineWarn:false, url:'https://career.bayer.de/en/', dateFound: new Date(Date.now() - 35*24*60*60*1000).toISOString() },
-
-  // --- BELGIUM ---
-  { id:'be-vib-immuno', country:'belgium', tier:'high', type:'phd', org:'VIB Gent', score:90, title:'PhD — Mucosal Immunology & Barrier Function', tags:['📍 Gent','PhD','Immunology','Caco-2'], why:'Your Caco-2 cell culture work is exactly what this project requires.', deadline:'📅 Open position', deadlineWarn:false, url:'https://vib.be/careers', dateFound: new Date(Date.now() - 9*24*60*60*1000).toISOString() },
-
-  // --- SWITZERLAND ---
-  { id:'ch-eth-epi', country:'switzerland', tier:'high', type:'phd', org:'ETH Zurich', score:93, title:'PhD — Molecular Biology & Chromatin Epigenetics', tags:['📍 Zurich','PhD','Epigenetics','CRISPR'], why:'Highly prestigious lab. Your CRISPR and qPCR skills are core requirements.', deadline:'📅 Rolling', deadlineWarn:false, url:'https://ethz.ch/en/the-eth-zurich/working-teaching-and-research/jobs.html', dateFound: new Date(Date.now() - 40*24*60*60*1000).toISOString() },
-
-  // --- LUXEMBOURG ---
-  { id:'lu-lih-cancer', country:'luxembourg', tier:'medium', type:'phd', org:'Luxembourg Institute of Health', score:70, title:'PhD — Immune Checkpoint Regulation in Cancer', tags:['📍 Luxembourg','PhD','Cancer','Flow Cytometry'], why:'Emerging research hub with great funding and facilities.', deadline:'📅 Apply by 30 June', deadlineWarn:true, url:'https://www.lih.lu/en/careers/vacancies/', dateFound: new Date(Date.now() - 11*24*60*60*1000).toISOString() },
-];
+// ── Not For Me ──
+function loadNotForMe() {
+  try { return JSON.parse(localStorage.getItem(NFM_KEY) || '[]'); } catch { return []; }
+}
+function saveNotForMe(arr) {
+  try { localStorage.setItem(NFM_KEY, JSON.stringify(arr)); } catch {}
+}
+function isNotForMe(job) {
+  const nfm = loadNotForMe();
+  return nfm.some(n => n.fp === jobFingerprint(job));
+}
+function jobFingerprint(job) {
+  return (job.title + '|' + job.org).toLowerCase().replace(/\s+/g, ' ').trim();
+}
 
 // ─────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────
-// On first load: prefer persisted merged board, fall back to INITIAL_JOBS
-let jobs = loadPersistedJobs() || INITIAL_JOBS.slice();
-let statuses = loadStatuses(); // { jobId: 'applied'|'rejected'|'closed'|'none' }
+// No hardcoded INITIAL_JOBS — board starts empty on first load,
+// prompts user to Refresh Board to fetch live data.
+let jobs = loadPersistedJobs() || [];
+let savedJobs = loadSavedJobs();
+let statuses = loadStatuses();
 let currentFilter = 'all';
 let currentCountry = 'sweden';
 let hideProcessed = false;
 let currentSort = 'best-match';
-let uppsalaOnly = false; // Uppsala-only filter mode
+let uppsalaOnly = false;
+let showSavedOnly = false;
 
 // ─────────────────────────────────────────────
 // DATE / FRESHNESS HELPERS
@@ -818,18 +892,20 @@ function scoreClass(s) { return s >= 80 ? 'sc-h' : s >= 65 ? 'sc-m' : 'sc-s'; }
 function barClass(s) { return s >= 80 ? 'bh' : s >= 65 ? 'bm' : 'bs'; }
 
 function buildCard(job) {
-  const status = statuses[job.id] || 'none';
-  const isPhd = job.type === 'phd';
+  const status  = statuses[job.id] || 'none';
+  const isPhd   = job.type === 'phd';
   const statusCls = status !== 'none' ? `status-${status}` : '';
-  const badge = freshnessBadge(job);
+  const badge   = freshnessBadge(job);
+  const isSaved = savedJobs.some(s => s.id === job.id);
+  const pinnedBadge = isSaved ? `<span class="pinned-badge">📌 Saved</span>` : '';
 
   return `
-  <div class="card ${job.type} tier-${job.tier} ${statusCls}" id="card-${job.id}" data-tier="${job.tier}" data-type="${job.type}" data-status="${status}" data-country="${job.country}" data-score="${job.score}" data-days="${daysSinceFound(job)}">
+  <div class="card ${job.type} tier-${job.tier} ${statusCls}" id="card-${job.id}" data-tier="${job.tier}" data-type="${job.type}" data-status="${status}" data-country="${job.country}" data-score="${job.score}" data-days="${daysSinceFound(job)}" data-org="${(job.org||'').toLowerCase()}">
     <div class="card-top">
       <div>
         <div class="card-meta-row">
           <div class="card-org ${isPhd ? 'b' : 'g'}">${job.org}</div>
-          ${badge}
+          ${badge}${pinnedBadge}
         </div>
       </div>
       <div class="score ${scoreClass(job.score)}">${job.score}/100</div>
@@ -842,11 +918,15 @@ function buildCard(job) {
     <div class="card-footer">
       <div class="status-row">
         <select class="status-select s-${status}" onchange="setStatus('${job.id}', this.value, this)">
-          <option value="none" ${status==='none'?'selected':''}>— Track status</option>
-          <option value="applied" ${status==='applied'?'selected':''}>✓ Applied</option>
+          <option value="none"     ${status==='none'    ?'selected':''}>— Track status</option>
+          <option value="applied"  ${status==='applied' ?'selected':''}>✓ Applied</option>
           <option value="rejected" ${status==='rejected'?'selected':''}>✗ Rejected</option>
-          <option value="closed" ${status==='closed'?'selected':''}>⊘ Closed</option>
+          <option value="closed"   ${status==='closed'  ?'selected':''}>⊘ Closed</option>
         </select>
+        <button class="save-btn ${isSaved?'saved':''}" onclick="toggleSave('${job.id}')" title="${isSaved?'Remove from saved':'Save this job'}">
+          ${isSaved ? '📌 Saved' : '📌 Save'}
+        </button>
+        <button class="nfm-btn" onclick="markNotForMe('${job.id}')" title="Hide permanently — not relevant for me">✕ Not For Me</button>
       </div>
       <a class="apply-btn ${isPhd ? 'b' : 'g'}" href="${job.url}" target="_blank">Apply →</a>
     </div>
@@ -931,23 +1011,26 @@ function toggleHideProcessed(checked) {
 
 function applyFilter() {
   const cards = document.querySelectorAll('.card');
+  const nfmFps = new Set(loadNotForMe().map(n => n.fp));
 
   cards.forEach(card => {
     let show = true;
 
-    if (uppsalaOnly) {
-      // Uppsala mode: show only Uppsala University cards regardless of country/type
-      const orgEl = card.querySelector('.card-org');
-      const orgText = (orgEl ? orgEl.textContent : '').toLowerCase();
-      show = orgText.includes('uppsala');
+    // Never show NFM jobs (belt-and-suspenders — they shouldn't be in jobs array)
+    const cardOrg = card.dataset.org || '';
+    const cardTitle = card.querySelector('.card-title')?.textContent || '';
+    const fp = (cardTitle + '|' + cardOrg).toLowerCase().trim();
+    if (nfmFps.has(fp)) { card.classList.add('hidden-card'); return; }
+
+    if (showSavedOnly) {
+      // Show only saved jobs regardless of country
+      const id = card.id.replace('card-', '');
+      show = savedJobs.some(s => s.id === id);
+    } else if (uppsalaOnly) {
+      show = cardOrg.includes('uppsala');
     } else {
-      // Normal mode: country + type filter
       if (card.dataset.country !== currentCountry) show = false;
-
-      if (show && currentFilter !== 'all') {
-        show = card.classList.contains(currentFilter);
-      }
-
+      if (show && currentFilter !== 'all') show = card.classList.contains(currentFilter);
       if (show && hideProcessed) {
         const s = card.dataset.status;
         if (s === 'applied' || s === 'rejected' || s === 'closed') show = false;
@@ -970,18 +1053,132 @@ function applyFilter() {
     document.getElementById(gridId).style.display = n === 0 ? 'none' : '';
   });
 
-  document.getElementById('emptyState').classList.toggle('show', visibleCards.length === 0);
+  // Update empty state message
+  const isEmpty = visibleCards.length === 0;
+  document.getElementById('emptyState').classList.toggle('show', isEmpty);
+  if (isEmpty) {
+    const msg = document.getElementById('emptyMsg');
+    if (msg) {
+      if (jobs.length === 0) msg.innerHTML = 'Click <strong>Refresh Board</strong> to fetch live job listings.';
+      else msg.innerHTML = 'No jobs match this filter. Try a different country or filter.';
+    }
+  }
   updateStatCounts();
 }
 
 // ─────────────────────────────────────────────
-// AUTO-REFRESH ON FIRST LOAD OF THE DAY
+// SAVE / PIN
 // ─────────────────────────────────────────────
-const LAST_AUTO_REFRESH_KEY = 'kavya_last_auto_refresh';
+function toggleSave(jobId) {
+  const job = jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const idx = savedJobs.findIndex(s => s.id === jobId);
+  if (idx >= 0) {
+    savedJobs.splice(idx, 1);
+  } else {
+    savedJobs.push({ ...job, savedAt: new Date().toISOString() });
+  }
+  saveSavedJobs(savedJobs);
+  renderAll();
+}
+
+// ─────────────────────────────────────────────
+// NOT FOR ME
+// ─────────────────────────────────────────────
+function markNotForMe(jobId) {
+  const job = jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const nfm = loadNotForMe();
+  const fp = jobFingerprint(job);
+  if (!nfm.some(n => n.fp === fp)) {
+    nfm.push({
+      fp,
+      title: job.title,
+      org: job.org,
+      dismissedAt: new Date().toISOString(),
+    });
+    saveNotForMe(nfm);
+  }
+  // Remove from live jobs
+  jobs = jobs.filter(j => j.id !== jobId);
+  savePersistedJobs(jobs);
+  // Remove from saved too if present
+  savedJobs = savedJobs.filter(s => s.id !== jobId);
+  saveSavedJobs(savedJobs);
+  renderAll();
+}
+
+function openNFMModal() {
+  const nfm = loadNotForMe();
+  const list = document.getElementById('nfmList');
+  if (nfm.length === 0) {
+    list.innerHTML = '<div class="nfm-modal-empty">No dismissed jobs. Use ✕ Not For Me on any card to hide it.</div>';
+  } else {
+    list.innerHTML = nfm.map((n, i) => `
+      <div class="nfm-entry" id="nfme-${i}">
+        <div class="nfm-entry-info">
+          <div class="nfm-entry-title">${n.title}</div>
+          <div class="nfm-entry-org">${n.org}</div>
+        </div>
+        <div class="nfm-entry-date">${new Date(n.dismissedAt).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</div>
+        <button class="nfm-restore-btn" onclick="restoreNFM(${i})">Restore</button>
+      </div>`).join('');
+  }
+  document.getElementById('nfmModal').classList.add('show');
+}
+
+function closeNFMModal() {
+  document.getElementById('nfmModal').classList.remove('show');
+}
+
+function restoreNFM(idx) {
+  const nfm = loadNotForMe();
+  nfm.splice(idx, 1);
+  saveNotForMe(nfm);
+  openNFMModal(); // refresh modal
+}
+
+function clearAllNFM() {
+  saveNotForMe([]);
+  openNFMModal();
+}
+
+// ─────────────────────────────────────────────
+// SAVED FILTER
+// ─────────────────────────────────────────────
+function setSavedFilter(btn) {
+  showSavedOnly = !showSavedOnly;
+  btn.classList.toggle('on', showSavedOnly);
+  if (showSavedOnly) {
+    uppsalaOnly = false;
+    document.getElementById('fb-uppsala').classList.remove('on');
+  }
+  applyFilter();
+}
+
+// ─────────────────────────────────────────────
+// CLEAR & REFRESH
+// ─────────────────────────────────────────────
+function clearAndRefresh() {
+  if (!confirm('This will clear all current job listings and fetch fresh ones from the server.\n\nYour Saved jobs and Not For Me list will be preserved.\n\nContinue?')) return;
+  // Clear live jobs only — preserve saved and NFM
+  jobs = [];
+  savePersistedJobs([]);
+  // Also clear old localStorage keys that may have stale data
+  try {
+    localStorage.removeItem('kavya_jobs_v3');
+    localStorage.removeItem('kavya_jobs_v2');
+    localStorage.removeItem('kavya_jobs_v1');
+  } catch {}
+  renderAll();
+  // Trigger fresh refresh
+  setTimeout(() => refreshJobs(), 500);
+}
+// AUTO_REFRESH_KEY defined in storage constants above
 
 function shouldAutoRefresh() {
   try {
-    const last = localStorage.getItem(LAST_AUTO_REFRESH_KEY);
+    const last = localStorage.getItem(AUTO_REFRESH_KEY);
     if (!last) return true; // never refreshed
     const lastDate = new Date(last).toDateString();
     const today    = new Date().toDateString();
@@ -990,7 +1187,7 @@ function shouldAutoRefresh() {
 }
 
 function markAutoRefreshed() {
-  try { localStorage.setItem(LAST_AUTO_REFRESH_KEY, new Date().toISOString()); } catch {}
+  try { localStorage.setItem(AUTO_REFRESH_KEY, new Date().toISOString()); } catch {}
 }
 
 function autoRefreshIfNeeded() {
@@ -1242,7 +1439,11 @@ function refreshJobs() {
         // Normalise response: accept { jobs: [...] } or bare array
         const apiJobs = Array.isArray(data) ? data : (data.jobs || []);
 
-        if (apiJobs.length === 0) {
+        // Filter out any jobs the user has marked "Not For Me"
+        const nfmFps = new Set(loadNotForMe().map(n => n.fp));
+        const apiJobsFiltered = apiJobs.filter(j => !nfmFps.has(jobFingerprint(j)));
+
+        if (apiJobsFiltered.length === 0) {
           const cleanup = sortAndSave();
           safeFinish();
           showUpdatePopup(0, jobs.length, false, true, cleanup.removed);
@@ -1253,16 +1454,16 @@ function refreshJobs() {
         const existingKeys = new Map();
         jobs.forEach(j => existingKeys.set(jobKey(j), j));
 
-        // Find truly new jobs
-        const genuinelyNew = apiJobs
+        // Find truly new jobs — filter NFM before adding
+        const genuinelyNew = apiJobsFiltered
           .filter(j => !existingKeys.has(jobKey(j)))
           .map(j => ({
             ...j,
             dateFound: j.dateFound || j.fetchedAt || new Date().toISOString(),
           }));
 
-        // MERGE: existing + new
-        jobs = [...jobs, ...genuinelyNew];
+        // MERGE: existing + new (also re-filter existing against NFM list)
+        jobs = [...jobs.filter(j => !nfmFps.has(jobFingerprint(j))), ...genuinelyNew];
 
         const cleanup = sortAndSave();
         safeFinish();
@@ -1374,9 +1575,13 @@ window.addEventListener('DOMContentLoaded', () => {
   renderAll();
   const lu = loadLastUpdate();
   if (lu) document.getElementById('lastUpdated').textContent = lu;
-  // Close modal on background click
+  // Close portal modal on background click
   document.getElementById('apiModal').addEventListener('click', e => {
     if (e.target === document.getElementById('apiModal')) closeModal();
+  });
+  // Close NFM modal on background click
+  document.getElementById('nfmModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('nfmModal')) closeNFMModal();
   });
   // Auto-refresh on first load of the day
   autoRefreshIfNeeded();

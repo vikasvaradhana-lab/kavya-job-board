@@ -451,19 +451,27 @@ function fingerprint(title = '', org = '') {
 // Keyword-search sources (FindAPhD, EURAXESS, Nature Careers) are trusted at MIN_SCORE_THRESHOLD.
 const GENERAL_PORTAL_SOURCES = new Set([
   'dutch', 'swedish', 'danish', 'resteurope', 'academictransfer',
+]);
+// New country portals — looser threshold since descriptions often in local language
+const NEW_COUNTRY_PORTAL_SOURCES = new Set([
   'norway', 'finland', 'austria',
 ]);
-const PORTAL_SCORE_THRESHOLD = 62; // raised bar for general portals
+const PORTAL_SCORE_THRESHOLD = 62; // established EU portals
+const NEW_COUNTRY_THRESHOLD  = 52; // new country portals
 
 // Build a proper job object from raw fields
 // sourceType: 'keyword' (search-result pages) | 'portal' (general university vacancy pages)
 function buildJob(raw, source, sourceType = 'keyword') {
   const score = scoreJob(raw.title, raw.description || '');
 
-  // Fix 5: Apply tighter threshold for general portal sources
-  const threshold = (sourceType === 'portal' || GENERAL_PORTAL_SOURCES.has(source))
-    ? PORTAL_SCORE_THRESHOLD
-    : MIN_SCORE_THRESHOLD;
+  // Apply appropriate threshold based on source type
+  let threshold = MIN_SCORE_THRESHOLD;
+  if (GENERAL_PORTAL_SOURCES.has(source) || sourceType === 'portal') {
+    threshold = PORTAL_SCORE_THRESHOLD;
+  }
+  if (NEW_COUNTRY_PORTAL_SOURCES.has(source)) {
+    threshold = NEW_COUNTRY_THRESHOLD; // override — looser for new countries
+  }
 
   if (score < threshold) return null;
 
@@ -1122,64 +1130,54 @@ async function scrapeNatureCareers() {
   return out;
 }
 
-// ── 5. PHDJOBS.COM + EURAXESS DIRECT (replacing jobs.ac.uk — HTTP 500 every run) ──
-// jobs.ac.uk RSS returns 500 on all endpoints. Replaced with:
-//   - phdjobs.com (no bot detection, covers European PhD positions)
-//   - Direct EURAXESS HTML (already partially working in scrapeEuraxess)
-//   - researchgate.net/jobs (aggregator, open access)
+// ── 5. PHDSTUDIES.COM (replacing phdjobs.com — 404, scholarshipdb — 403) ─────
 async function scrapeFindAPhD() {
   const jobs = [];
 
-  // ── phdjobs.com — no bot detection, European focus ──
-  const phdJobsUrls = [
-    'https://www.phdjobs.com/jobs/search/?q=immunology+stem+cell&type=phd',
-    'https://www.phdjobs.com/jobs/search/?q=epigenetics+molecular+biology&type=phd',
-    'https://www.phdjobs.com/jobs/search/?q=cell+culture+cell+biology&type=phd',
-    'https://www.phdjobs.com/jobs/search/?q=regenerative+medicine+phd',
-    'https://www.phdjobs.com/jobs/search/?q=marie+curie+msca+biology',
-    'https://www.phdjobs.com/jobs/search/?q=neuroscience+neurotoxicology+phd',
+  // phdstudies.com — aggregates funded PhD positions, no bot detection
+  const phdStudiesUrls = [
+    'https://www.phdstudies.com/phd/europe/immunology/',
+    'https://www.phdstudies.com/phd/europe/biology/',
+    'https://www.phdstudies.com/phd/europe/molecular-biology/',
+    'https://www.phdstudies.com/phd/europe/cell-biology/',
+    'https://www.phdstudies.com/phd/sweden/',
+    'https://www.phdstudies.com/phd/netherlands/',
+    'https://www.phdstudies.com/phd/germany/',
+    'https://www.phdstudies.com/phd/norway/',
+    'https://www.phdstudies.com/phd/finland/',
+    'https://www.phdstudies.com/phd/denmark/',
   ];
-  for (const url of phdJobsUrls) {
-    const html = await safeFetch(url, { referer: 'https://www.phdjobs.com/' });
+  for (const url of phdStudiesUrls) {
+    const html = await safeFetch(url, { referer: 'https://www.phdstudies.com/' });
     if (!html) continue;
-    const defaults = { baseUrl: url, country: 'germany', type: 'phd' };
-    jobs.push(...extractEmbeddedJobs(html, defaults));
-    jobs.push(...parseHtmlCards(html, defaults, {
-      card: 'article, li, .job, .result, [class*="job"], [class*="position"]',
-      title: 'h2, h3, a, [class*="title"]',
-      link: 'a[href*="/jobs/"], a[href]',
-      org: '[class*="employer"], [class*="institution"], [class*="university"]',
-      location: '[class*="location"], [class*="country"]',
-      description: 'p, [class*="description"], [class*="summary"]',
-    }));
-    await new Promise(r => setTimeout(r, 400));
-  }
-
-  // ── scholarshipdb.net — aggregates funded PhD positions ──
-  const scholarUrls = [
-    'https://scholarshipdb.net/scholarships-in-Sweden?q=phd+immunology+stem+cell',
-    'https://scholarshipdb.net/scholarships-in-Netherlands?q=phd+immunology+molecular+biology',
-    'https://scholarshipdb.net/scholarships-in-Germany?q=phd+stem+cell+epigenetics',
-    'https://scholarshipdb.net/scholarships-in-Denmark?q=phd+immunology+cell+biology',
-  ];
-  for (const url of scholarUrls) {
-    const html = await safeFetch(url, { referer: 'https://scholarshipdb.net/' });
-    if (!html) continue;
-    const countryMatch = url.match(/scholarships-in-([^?]+)/);
+    const countryMatch = url.match(/phdstudies\.com\/phd\/([^/]+)\/?$/);
     const country = countryMatch ? resolveCountry(countryMatch[1]) || 'germany' : 'germany';
     const defaults = { baseUrl: url, country, type: 'phd' };
     jobs.push(...extractEmbeddedJobs(html, defaults));
     jobs.push(...parseHtmlCards(html, defaults, {
-      card: 'article, li, .scholarship, .result, [class*="job"]',
+      card: 'article, li, .program-card, .result, [class*="program"], [class*="phd"]',
       title: 'h2, h3, a, [class*="title"]',
-      link: 'a[href]',
-      org: '[class*="institution"], [class*="university"]',
-      description: 'p, [class*="description"]',
+      link: 'a[href*="/phd/"], a[href]',
+      org: '[class*="school"], [class*="institution"], [class*="university"]',
+      location: '[class*="location"], [class*="country"]',
+      description: 'p, [class*="description"], [class*="summary"]',
     }));
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  // mastersportal.eu — also covers PhD positions, good European coverage
+  const mastersUrls = [
+    'https://www.mastersportal.eu/search/#q=stem-cell-immunology&study=phd&country=se,nl,dk,de,be,ch,no,fi,at',
+    'https://www.mastersportal.eu/search/#q=molecular-biology-epigenetics&study=phd&country=se,nl,dk,de',
+  ];
+  for (const url of mastersUrls) {
+    const html = await safeFetch(url, { referer: 'https://www.mastersportal.eu/' });
+    if (!html) continue;
+    jobs.push(...extractEmbeddedJobs(html, { baseUrl: url, country: 'sweden', type: 'phd' }));
   }
 
   const out = deduplicateRawJobs(jobs).slice(0, MAX_JOBS_PER_SOURCE * 3);
-  console.log(`  phdjobs.com/scholarshipdb (FindAPhD replacement): ${out.length} raw candidates`);
+  console.log(`  phdstudies.com: ${out.length} raw candidates`);
   return out;
 }
 
@@ -1397,48 +1395,12 @@ async function scrapeDanishInstitutions() {
 
 // ── 9. EMBL — Workday API + Playwright fallback ───────────────────────────────
 // NOTE: Workday CXS API returns 400 without exact headers.
-// Fix: send correct Content-Type, X-Workday-Client header, and exact payload shape.
-// Always also try Playwright on the public page — it reliably renders all jobs.
+// EMBL — Playwright-primary (Workday API returns 400 on every call, removed)
 async function scrapeEMBL() {
   const jobs = [];
-  const workdayApiUrl = 'https://embl.wd103.myworkdayjobs.com/wday/cxs/embl/EMBL/jobs';
   const workdayPageUrl = 'https://embl.wd103.myworkdayjobs.com/EMBL';
 
-  const workdayHeaders = {
-    'Content-Type': 'application/json;charset=UTF-8',
-    'Accept': 'application/json',
-    'X-Workday-Client': '2024.35.8',
-    'Origin': 'https://embl.wd103.myworkdayjobs.com',
-    'Referer': workdayPageUrl,
-  };
-
-  const searches = ['', 'phd', 'molecular biology', 'cell biology', 'epigenetics', 'immunology'];
-  for (const searchText of searches) {
-    try {
-      const res = await axios.post(workdayApiUrl,
-        { appliedFacets: {}, limit: 50, offset: 0, searchText },
-        { timeout: REQUEST_TIMEOUT, headers: { ...HEADERS, ...workdayHeaders }, validateStatus: s => s < 400 }
-      );
-      const data = res.data;
-      const defaults = { org: 'EMBL', country: 'germany', location: 'Heidelberg', baseUrl: workdayPageUrl };
-      for (const j of data.jobPostings || data.jobs || []) {
-        const location = jsonValue(j.locationsText || j.location || j.locations) || defaults.location;
-        pushJob(jobs, {
-          title: j.title || '',
-          org: 'EMBL', location,
-          country: resolveCountry(location) || 'germany',
-          description: j.bulletFields?.join(' ') || j.summary || '',
-          url: j.externalPath ? `${workdayPageUrl}/job${j.externalPath}` : workdayPageUrl,
-          deadline: j.postedOn ? `📅 ${j.postedOn}` : undefined,
-        }, defaults);
-      }
-      jobs.push(...extractJobsFromJson(data, defaults));
-    } catch (e) {
-      console.warn(`  ⚠ EMBL Workday API [${searchText||'all'}]: ${e.response?.status || e.message}`);
-    }
-  }
-
-  // Playwright on Workday public page — always run, most reliable
+  // Primary: Playwright on Workday public page — reliably works every run
   jobs.push(...await parseProtectedPage(workdayPageUrl, {
     org: 'EMBL', country: 'germany', location: 'Heidelberg', baseUrl: workdayPageUrl,
   }, {
@@ -1821,73 +1783,46 @@ function fallbackPool(liveJobs = []) {
 }
 
 // ── 12. NORWAY ───────────────────────────────────────────────────────────────
-// Jobbnorge is the main Norwegian academic jobs board.
-// CONFIRMED URL format: /en/available-jobs (no employer slug — use category filter)
-// Employer slugs like ?Employer=universitetet-i-oslo return 404.
+// Jobbnorge direct fetch returns 404 on all URL variants — Playwright only
 async function scrapeNorway() {
   const jobs = [];
 
-  // Strategy A: Jobbnorge category listing — all academic/research positions
-  const jobbnorgeUrls = [
-    'https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64',             // Research
-    'https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64&AdCategoryId=52', // Research + PhD
-    'https://www.jobbnorge.no/en/available-jobs?q=immunology+stem+cell',
-    'https://www.jobbnorge.no/en/available-jobs?q=molecular+biology+phd',
-    'https://www.jobbnorge.no/en/available-jobs?q=cell+biology+epigenetics',
-  ];
-  for (const url of jobbnorgeUrls) {
-    const html = await safeFetch(url, { referer: 'https://www.jobbnorge.no/' });
-    if (!html) continue;
-    const defaults = { country: 'norway', baseUrl: url };
-    jobs.push(...extractEmbeddedJobs(html, defaults));
-    jobs.push(...parseHtmlCards(html, defaults, {
-      card: 'article, li, .vacancy-item, .job-item, [class*="job"], [class*="vacancy"]',
-      title: 'h2, h3, a, .title, [class*="title"]',
-      link: 'a[href]',
-      org: '[class*="employer"], [class*="institution"], [class*="university"]',
-      description: 'p, [class*="description"], [class*="summary"]',
-    }));
-  }
-
-  // Strategy B: Playwright on Jobbnorge (JS-rendered listing)
+  // Primary: Playwright on Jobbnorge — reliably renders all research positions
   jobs.push(...await parseProtectedPage(
     'https://www.jobbnorge.no/en/available-jobs?AdCategoryId=64',
     { country: 'norway', baseUrl: 'https://www.jobbnorge.no/en/available-jobs' },
     {
-      card: 'article, li, [class*="vacancy"], [class*="job"]',
+      card: 'article, li, [class*="vacancy"], [class*="job"], [class*="position"]',
       title: 'h2, h3, a, [class*="title"]',
       link: 'a[href]',
-      org: '[class*="employer"], [class*="institution"]',
-      description: 'p, [class*="description"]',
+      org: '[class*="employer"], [class*="institution"], [class*="university"]',
+      description: 'p, [class*="description"], [class*="summary"]',
     },
     { referer: 'https://www.jobbnorge.no/', waitForSelector: 'article, li, [class*="vacancy"]' }
   ));
 
-  // Strategy C: University of Oslo — correct URL is /english/about/vacancies/
-  const uioUrls = [
+  // University of Oslo — correct vacancies URL
+  for (const url of [
     'https://www.uio.no/english/about/vacancies/',
     'https://www.uio.no/english/about/vacancies/academic/',
-  ];
-  for (const url of uioUrls) {
+  ]) {
     const html = await safeFetch(url, { referer: 'https://www.uio.no/' });
     if (!html) continue;
-    jobs.push(...extractEmbeddedJobs(html, { org: 'University of Oslo', country: 'norway', baseUrl: url }));
-    jobs.push(...parseHtmlCards(html, { org: 'University of Oslo', country: 'norway', location: 'Oslo', baseUrl: url }, {
+    const defaults = { org: 'University of Oslo', country: 'norway', location: 'Oslo', baseUrl: url };
+    jobs.push(...extractEmbeddedJobs(html, defaults));
+    jobs.push(...parseHtmlCards(html, defaults, {
       card: 'article, li, .vrtx-resource, [class*="vacancy"]',
-      title: 'h2, h3, a',
-      link: 'a[href]',
-      description: 'p',
+      title: 'h2, h3, a', link: 'a[href]', description: 'p',
     }));
   }
 
-  // Strategy D: NTNU — correct URL
+  // NTNU
   const ntnuHtml = await safeFetch('https://www.ntnu.edu/vacancies', { referer: 'https://www.ntnu.edu/' });
   if (ntnuHtml) {
-    jobs.push(...extractEmbeddedJobs(ntnuHtml, { org: 'NTNU', country: 'norway', location: 'Trondheim', baseUrl: 'https://www.ntnu.edu/vacancies' }));
-    jobs.push(...parseHtmlCards(ntnuHtml, { org: 'NTNU', country: 'norway', location: 'Trondheim', baseUrl: 'https://www.ntnu.edu/vacancies' }, {
-      card: 'article, li, tr, [class*="vacancy"]',
-      title: 'h2, h3, a, td a',
-      link: 'a[href]',
+    const defaults = { org: 'NTNU', country: 'norway', location: 'Trondheim', baseUrl: 'https://www.ntnu.edu/vacancies' };
+    jobs.push(...extractEmbeddedJobs(ntnuHtml, defaults));
+    jobs.push(...parseHtmlCards(ntnuHtml, defaults, {
+      card: 'article, li, tr, [class*="vacancy"]', title: 'h2, h3, a, td a', link: 'a[href]',
     }));
   }
 
@@ -2161,8 +2096,13 @@ async function scrapeAllSources() {
   Object.entries(sourceBreakdown)
     .sort((a, b) => b[1] - a[1])
     .forEach(([src, n]) => {
-      const type = GENERAL_PORTAL_SOURCES.has(src) ? '(portal, threshold ≥62)' : '(keyword, threshold ≥48)';
-      console.log(`   ${src.padEnd(18)} ${String(n).padStart(4)} ${type}`);
+      let thr = MIN_SCORE_THRESHOLD;
+      if (GENERAL_PORTAL_SOURCES.has(src)) thr = PORTAL_SCORE_THRESHOLD;
+      if (NEW_COUNTRY_PORTAL_SOURCES.has(src)) thr = NEW_COUNTRY_THRESHOLD;
+      const type = GENERAL_PORTAL_SOURCES.has(src) ? '(portal)'
+        : NEW_COUNTRY_PORTAL_SOURCES.has(src) ? '(new-country portal)'
+        : '(keyword)';
+      console.log(`   ${src.padEnd(18)} ${String(n).padStart(4)} ${type}, threshold ≥${thr}`);
     });
   console.log(`\n📊 Total raw candidates across all sources: ${allRaw.length}`);
 
